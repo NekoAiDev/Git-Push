@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-甘城猫猫的 Git Push 小工具 🐾
+Git Push 小工具 
 ================================
-一个带图形界面的小工具：主人打开后，选择本地文件夹（或单个文件），
+一个带图形界面的小工具：打开后，选择本地文件夹（或单个文件），
 填写远程仓库地址，点一下按钮，就能自动完成：
     git init（如果还不是仓库）
     git add
     git commit
     git remote add / set-url
     git push -u <remote> <branch>
-并在界面上实时显示每一步的日志喵~
+并在界面上实时显示每一步的日志
 
 运行方式（主人本机）：
     python git_push_tool.py
@@ -25,7 +25,7 @@ import subprocess
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
 
-APP_TITLE = "甘城猫猫的 Git Push 小工具 🐾"
+APP_TITLE = "Git Push 工具推送"
 APP_VERSION = "1.0"
 
 
@@ -62,8 +62,8 @@ class GitPushTool:
         if not is_git_available():
             self.set_status("⚠️ 未发现 git，请先安装 git 并加入 PATH")
             messagebox.showwarning(
-                "喵呜~ git 没找到",
-                "主人本机似乎没有安装 git，或者 git 不在系统 PATH 里喵~\n"
+                " git 没找到",
+                "本机似乎没有安装 git，或者 git 不在系统 PATH 里\n"
                 "请先安装 git：https://git-scm.com/downloads\n"
                 "安装后重启本工具即可~"
             )
@@ -77,7 +77,7 @@ class GitPushTool:
             self.style.theme_use("vista")
         except Exception:
             pass
-        # 用 tkfont.Font 对象指定字体，避免 Tcl/Tk 错误解析中文字体名喵~
+        # 用 tkfont.Font 对象指定字体，避免 Tcl/Tk 错误解析中文字体名
         self.title_font = tkfont.Font(family="Segoe UI", size=14, weight="bold")
         self.small_font = tkfont.Font(family="Segoe UI", size=9)
         self.btn_font   = tkfont.Font(family="Segoe UI", size=11, weight="bold")
@@ -89,11 +89,11 @@ class GitPushTool:
         pad = {"padx": 12, "pady": 5}
 
         # 标题
-        head = ttk.Label(self.root, text="🐾 " + APP_TITLE, style="Title.TLabel")
+        head = ttk.Label(self.root, text="  " + APP_TITLE, style="Title.TLabel")
         head.pack(anchor="w", **pad)
 
         sub = ttk.Label(self.root,
-                        text="选好文件夹、填好仓库地址，一键自动推送喵~",
+                        text="选好文件夹、填好仓库地址，一键自动推送",
                         style="Small.TLabel")
         sub.pack(anchor="w", **pad)
 
@@ -131,7 +131,7 @@ class GitPushTool:
 
         # 提交信息
         ttk.Label(frm, text="提交信息：").grid(row=4, column=0, sticky="w", pady=4)
-        self.commit_var = tk.StringVar(value="Auto push by 甘城猫猫 🐾")
+        self.commit_var = tk.StringVar(value="Auto push by Git Push工具")
         ttk.Entry(frm, textvariable=self.commit_var).grid(row=4, column=1, columnspan=3, sticky="ew")
 
         # 选项
@@ -171,12 +171,12 @@ class GitPushTool:
 
     # ---------------------------------------------------------------- 选择
     def _pick_folder(self):
-        p = filedialog.askdirectory(title="选择要推送的文件夹喵~")
+        p = filedialog.askdirectory(title="选择要推送的文件夹")
         if p:
             self.path_var.set(p)
 
     def _pick_file(self):
-        p = filedialog.askopenfilename(title="选择要推送的单个文件喵~")
+        p = filedialog.askopenfilename(title="选择要推送的单个文件")
         if p:
             self.path_var.set(p)
 
@@ -200,23 +200,23 @@ class GitPushTool:
         path = self.path_var.get().strip()
         repo = self.repo_var.get().strip()
         branch = self.branch_var.get().strip() or "main"
-        commit = self.commit_var.get().strip() or "Auto push by 甘城猫猫"
+        commit = self.commit_var.get().strip() or "Auto push by Git Push工具"
         remote = self.remote_var.get().strip() or "origin"
         force = self.force_var.get()
 
         if not path:
-            messagebox.showerror("喵呜~出错啦", "请先选择要 Push 的文件夹或文件喵~")
+            messagebox.showerror("出错啦", "请先选择要 Push 的文件夹或文件")
             return
         if not repo:
-            messagebox.showerror("喵呜~出错啦", "请填写要 Push 的远程仓库地址喵~")
+            messagebox.showerror("出错啦", "请填写要 Push 的远程仓库地址")
             return
         if not os.path.exists(path):
-            messagebox.showerror("喵呜~出错啦", "主人填的路径不存在喵~请检查一下~")
+            messagebox.showerror("出错啦", "主人填的路径不存在喵~请检查一下")
             return
 
         self.running = True
         self.root.after(0, lambda: self.push_btn.config(state="disabled"))
-        self.set_status("正在推送中…喵~")
+        self.set_status("正在推送中…")
         t = threading.Thread(target=self.do_push,
                              args=(path, repo, branch, commit, remote, force),
                              daemon=True)
@@ -237,14 +237,14 @@ class GitPushTool:
             proc.wait()
             return proc.returncode
         except FileNotFoundError:
-            self.log("❌ 找不到 git 命令，请确认 git 已安装并在 PATH 中喵~")
+            self.log("❌ 找不到 git 命令，请确认 git 已安装并在 PATH 中")
             return 1
         except Exception as e:
             self.log(f"❌ 执行命令时出错：{e}")
             return 1
 
     def _git_out(self, args, cwd):
-        """安全地取 git 命令的 stdout 文本，永不返回 None 喵~"""
+        """安全地取 git 命令的 stdout 文本，永不返回 None """
         try:
             r = subprocess.run(["git"] + args, cwd=cwd,
                                capture_output=True, text=True,
@@ -272,7 +272,7 @@ class GitPushTool:
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             if inside.returncode != 0:
-                self.log("🔧 还不是 Git 仓库，正在 git init 喵~")
+                self.log("🔧 还不是 Git 仓库，正在 git init ")
                 self.run(["git", "init"], repo_dir)
                 self.run(["git", "checkout", "-B", branch], repo_dir)
             else:
@@ -282,14 +282,14 @@ class GitPushTool:
             name = self._git_out(["config", "user.name"], repo_dir).strip()
             email = self._git_out(["config", "user.email"], repo_dir).strip()
             if not name or not email:
-                self.log("⚠️ 此仓库（及全局）未配置 user.name / user.email，commit 可能失败喵~")
+                self.log("⚠️ 此仓库（及全局）未配置 user.name / user.email，commit 可能失败")
                 self.log("   可在命令行先执行：")
                 self.log("   git config --global user.name \"你的名字\"")
                 self.log("   git config --global user.email \"你的邮箱\"")
 
             # 3) 认证提示
             if repo.startswith("https://") and "@" not in repo:
-                self.log("🔐 提示：HTTPS 地址未带凭证。若本机未缓存 Git 凭证可能会弹窗或失败喵~")
+                self.log("🔐 提示：HTTPS 地址未带凭证。若本机未缓存 Git 凭证可能会弹窗或失败")
                 self.log("   方案 A：用已缓存凭证的系统的凭据管理器；")
                 self.log("   方案 B：地址写成 https://<TOKEN>@github.com/用户/仓库.git")
 
@@ -302,7 +302,7 @@ class GitPushTool:
             if status:
                 self.run(["git", "commit", "-m", commit], repo_dir)
             else:
-                self.log("💡 没有新的改动，跳过 commit 喵~")
+                self.log("💡 没有新的改动，跳过 commit ")
 
             # 6) git remote
             remotes = self._git_out(["remote"], repo_dir).split()
@@ -319,10 +319,10 @@ class GitPushTool:
             rc = self.run(cmd, repo_dir)
 
             if rc == 0:
-                self.log("🎉 推送成功！主人最棒了喵~")
+                self.log("🎉 推送成功！")
                 self.set_status("✅ 推送成功")
             else:
-                self.log("⚠️ 推送失败，请查看上方日志找原因喵~（多半是凭证或分支冲突）")
+                self.log("⚠️ 推送失败，请查看上方日志找原因（多半是凭证或分支冲突）")
                 self.set_status("❌ 推送失败")
         except Exception as e:
             self.log(f"❌ 发生异常：{e}")
@@ -334,7 +334,7 @@ class GitPushTool:
     # ---------------------------------------------------------------- 帮助
     def _show_help(self):
         msg = (
-            "【甘城猫猫的 Git Push 小工具 · 使用说明】\n\n"
+            "【Git Push 工具 · 使用说明】\n\n"
             "1. 点「选择文件夹」或「选择文件」，指定要推送的本地内容。\n"
             "2. 在「远程仓库」填入仓库地址，例如：\n"
             "      https://github.com/用户名/仓库.git\n"
@@ -351,14 +351,14 @@ class GitPushTool:
     def _show_about(self):
         messagebox.showinfo("关于",
                             f"{APP_TITLE}\n版本 {APP_VERSION}\n\n"
-                            "由甘城猫猫为主人精心编写的女仆级 Git 推送小工具喵~")
+                            "由小红蛋精心编写的Git 推送工具")
 
 
 def main():
     try:
         root = tk.Tk()
         try:
-            # 用安全字体名设置全局默认字体（避免中文字体名被 Tcl 误解析喵~）
+            # 用安全字体名设置全局默认字体（避免中文字体名被 Tcl 误解析）
             default_font = tkfont.nametofont("TkDefaultFont")
             default_font.configure(family="Segoe UI", size=10)
         except Exception:
@@ -366,13 +366,13 @@ def main():
         GitPushTool(root)
         root.mainloop()
     except Exception:
-        # 兜底：任何启动期异常都弹窗显示，避免一闪而过看不到原因喵~
+        # 兜底：任何启动期异常都弹窗显示，避免一闪而过看不到原因
         import traceback
         err = traceback.format_exc()
         try:
             r = tk.Tk()
             r.withdraw()
-            messagebox.showerror("喵呜~启动失败", err)
+            messagebox.showerror("启动失败", err)
         except Exception:
             print(err)
         try:
