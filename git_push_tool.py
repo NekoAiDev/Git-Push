@@ -17,16 +17,24 @@ Git Push 小工具
 需要本机已安装 git 且能在命令行直接调用。
 """
 
+import json
 import os
 import re
-import sys
-import threading
 import subprocess
+import sys
+import tempfile
+import threading
 import tkinter as tk
+import urllib.request
 from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.0"
+APP_VERSION = "1.1.0"
+
+GITHUB_OWNER = "NekoAiDev"
+GITHUB_REPO = "Git-Push"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+ASSET_NAME = "GitPush.exe"
 
 
 def is_git_available():
@@ -163,10 +171,16 @@ class GitPushTool:
 
     def _build_menu(self):
         menubar = tk.Menu(self.root)
+
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="使用说明", command=self._show_help)
         help_menu.add_command(label="关于", command=self._show_about)
         menubar.add_cascade(label="帮助", menu=help_menu)
+
+        update_menu = tk.Menu(menubar, tearoff=0)
+        update_menu.add_command(label="检查更新", command=self._open_updater)
+        menubar.add_cascade(label="更新(U)", menu=update_menu)
+
         self.root.config(menu=menubar)
 
     # ---------------------------------------------------------------- 选择
@@ -352,6 +366,279 @@ class GitPushTool:
         messagebox.showinfo("关于",
                             f"{APP_TITLE}\n版本 {APP_VERSION}\n\n"
                             "由小红蛋精心编写的Git 推送工具")
+
+    # ---------------------------------------------------------------- 更新
+    def _open_updater(self):
+        Updater(self.root, APP_VERSION).show()
+
+
+class Updater:
+    def __init__(self, parent, current_version):
+        self.parent = parent
+        self.current_version = current_version
+        self.window = None
+        self.info = None
+        self.asset_url = None
+        self.remote_ver_label = None
+        self.status_var = None
+        self.note_box = None
+        self.log_box = None
+        self.update_btn = None
+
+    def show(self):
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("检查更新")
+        self.window.geometry("560x460")
+        self.window.minsize(480, 360)
+        self.window.transient(self.parent)
+        self.window.grab_set()
+        self.window.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        ttk.Label(self.window, text="Git Push 工具更新",
+                  style="Title.TLabel").pack(anchor="w", padx=12, pady=(10, 2))
+        ttk.Label(self.window, text="从 GitHub Releases 拉取最新版本",
+                  style="Small.TLabel").pack(anchor="w", padx=12)
+
+        info_frm = ttk.Frame(self.window)
+        info_frm.pack(fill="x", padx=12, pady=8)
+        ttk.Label(info_frm, text="当前版本：").grid(row=0, column=0, sticky="w")
+        ttk.Label(info_frm, text=self.current_version).grid(row=0, column=1, sticky="w")
+        ttk.Label(info_frm, text="远程版本：").grid(row=1, column=0, sticky="w", pady=4)
+        self.remote_ver_label = ttk.Label(info_frm, text="正在检查…")
+        self.remote_ver_label.grid(row=1, column=1, sticky="w")
+        ttk.Label(info_frm, text="更新状态：").grid(row=2, column=0, sticky="w")
+        self.status_var = tk.StringVar(value="正在连接 GitHub …")
+        ttk.Label(info_frm, textvariable=self.status_var).grid(row=2, column=1, sticky="w")
+
+        note_frm = ttk.LabelFrame(self.window, text="更新说明", padding=(8, 6))
+        note_frm.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+        self.note_box = scrolledtext.ScrolledText(note_frm, wrap="word",
+                                                  font=("Segoe UI", 10))
+        self.note_box.pack(fill="both", expand=True)
+        self.note_box.configure(state="disabled")
+
+        log_frm = ttk.LabelFrame(self.window, text="更新日志", padding=(8, 6))
+        log_frm.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+        self.log_box = scrolledtext.ScrolledText(log_frm, wrap="word",
+                                                  font=("Consolas", 9))
+        self.log_box.pack(fill="both", expand=True)
+        self.log_box.configure(state="disabled")
+
+        btn_frm = ttk.Frame(self.window)
+        btn_frm.pack(fill="x", padx=12, pady=(0, 12))
+        self.update_btn = ttk.Button(btn_frm, text="立即更新",
+                                     command=self._do_update, state="disabled")
+        self.update_btn.pack(side="right", padx=(6, 0))
+        ttk.Button(btn_frm, text="关闭", command=self._on_close).pack(side="right")
+
+        self._fetch_info()
+
+    # ---------------------------------------------------------------- UI helpers
+    def _safe_call(self, func, *args, **kwargs):
+        try:
+            func(*args, **kwargs)
+        except tk.TclError:
+            pass
+        except Exception:
+            pass
+
+    def _log(self, text):
+        self.parent.after(0, lambda: self._safe_call(self._append_log, str(text)))
+
+    def _append_log(self, text):
+        self.log_box.configure(state="normal")
+        self.log_box.insert(tk.END, text + "\n")
+        self.log_box.configure(state="disabled")
+        self.log_box.see(tk.END)
+
+    def _set_status(self, text):
+        self.parent.after(0, lambda: self._safe_call(self.status_var.set, text))
+
+    def _set_remote_ver(self, text):
+        self.parent.after(0, lambda: self._safe_call(self.remote_ver_label.config, {"text": text}))
+
+    def _set_note(self, text):
+        def _apply():
+            self.note_box.configure(state="normal")
+            self.note_box.delete("1.0", tk.END)
+            self.note_box.insert(tk.END, text)
+            self.note_box.configure(state="disabled")
+        self.parent.after(0, lambda: self._safe_call(_apply))
+
+    def _on_close(self):
+        try:
+            self.window.destroy()
+        except Exception:
+            pass
+
+    # ---------------------------------------------------------------- version
+    @staticmethod
+    def _parse_version(v):
+        s = re.sub(r"^[vV]", "", str(v))
+        parts = []
+        for p in s.split("."):
+            try:
+                parts.append(int(re.sub(r"[^0-9]", "", p) or "0"))
+            except Exception:
+                parts.append(0)
+        return tuple(parts)
+
+    def _compare_version(self, current, remote):
+        cur = self._parse_version(current)
+        rem = self._parse_version(remote)
+        if cur > rem:
+            return 1
+        if cur < rem:
+            return -1
+        return 0
+
+    # ---------------------------------------------------------------- fetch
+    def _fetch_info(self):
+        def fetch():
+            try:
+                self._log(f"正在请求：{GITHUB_API_URL}")
+                req = urllib.request.Request(
+                    GITHUB_API_URL,
+                    headers={
+                        "User-Agent": f"GitPushTool/{self.current_version}",
+                        "Accept": "application/vnd.github+json",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                self.info = data
+                self.parent.after(0, self._on_info_ready, data)
+            except Exception as e:
+                self.parent.after(0, self._on_error, f"连接 GitHub 失败：{e}")
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _on_info_ready(self, data):
+        remote_ver = data.get("tag_name", "未知")
+        self._set_remote_ver(remote_ver)
+
+        body = data.get("body", "") or "作者没有写更新说明喵~"
+        self._set_note(body)
+
+        asset_url = None
+        for asset in data.get("assets", []):
+            if asset.get("name") == ASSET_NAME:
+                asset_url = asset.get("browser_download_url")
+                break
+        self.asset_url = asset_url
+
+        if not asset_url:
+            self._set_status("未找到 GitPush.exe 下载链接")
+            self._log("❌ 远程 Release 里没有找到 GitPush.exe，无法自动更新")
+            return
+
+        cmp = self._compare_version(self.current_version, remote_ver)
+        if cmp < 0:
+            self._set_status(f"发现新版本 {remote_ver}！")
+            self._log(f"✅ 发现新版本：{remote_ver}，点击「立即更新」即可下载替换")
+            self.update_btn.config(state="normal")
+        elif cmp > 0:
+            self._set_status("当前版本比远程还新")
+            self._log("💡 当前版本比 GitHub 上的还新，无需更新")
+        else:
+            self._set_status("已经是最新版啦")
+            self._log("💡 已经是最新版本，无需更新")
+
+    def _on_error(self, msg):
+        self._set_status("检查更新失败")
+        self._set_remote_ver("—")
+        self._log(f"❌ {msg}")
+
+    # ---------------------------------------------------------------- download & replace
+    def _do_update(self):
+        if not self.asset_url:
+            messagebox.showerror("无法更新", "没有可用的下载链接")
+            return
+        self.update_btn.config(state="disabled")
+        self._set_status("正在下载新版本…")
+        self._log("开始下载新 exe，请稍候…")
+        threading.Thread(target=self._download, daemon=True).start()
+
+    def _download(self):
+        try:
+            tmp_dir = tempfile.gettempdir()
+            new_exe = os.path.join(tmp_dir, "GitPush_new.exe")
+            self._log(f"下载目标：{new_exe}")
+
+            req = urllib.request.Request(
+                self.asset_url,
+                headers={"User-Agent": f"GitPushTool/{self.current_version}"},
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                chunk_size = 64 * 1024
+                with open(new_exe, "wb") as f:
+                    while True:
+                        chunk = resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total:
+                            pct = downloaded * 100 // total
+                            self._set_status(f"下载进度：{pct}%")
+                        else:
+                            self._set_status(f"已下载：{downloaded // 1024} KB")
+
+            self._set_status("下载完成，准备替换…")
+            self._log("✅ 下载完成，正在准备替换…")
+            self.parent.after(0, self._prepare_replace, new_exe)
+        except Exception as e:
+            self.parent.after(0, self._on_error, f"下载失败：{e}")
+
+    def _prepare_replace(self, new_exe):
+        if not getattr(sys, "frozen", False):
+            self._log("⚠️ 当前是脚本运行模式，无法自动替换 exe")
+            messagebox.showinfo(
+                "开发模式",
+                "当前运行的是 Python 脚本，无法自动替换 exe。\n"
+                f"新文件已下载到：\n{new_exe}"
+            )
+            self._set_status("开发模式，未替换")
+            self.update_btn.config(state="normal")
+            return
+
+        old_exe = sys.executable
+        if not os.path.exists(old_exe):
+            self._log("❌ 找不到当前 exe，无法替换")
+            self._set_status("找不到当前 exe")
+            return
+
+        bat_path = os.path.join(tempfile.gettempdir(), "update_gitpush.bat")
+        try:
+            with open(bat_path, "w", encoding="utf-8") as f:
+                f.write("@echo off\n")
+                f.write("chcp 65001 >nul\n")
+                f.write("echo 正在更新 Git Push 工具，请稍候…\n")
+                f.write("timeout /t 2 /nobreak >nul\n")
+                f.write(f'move /Y "{new_exe}" "{old_exe}" >nul\n')
+                f.write("if %errorlevel% neq 0 (\n")
+                f.write(f'    echo 替换失败，请手动用 "{new_exe}" 覆盖 "{old_exe}"\n')
+                f.write("    pause\n")
+                f.write("    exit /b 1\n")
+                f.write(")\n")
+                f.write(f'start "" "{old_exe}"\n')
+                f.write('del "%~f0"\n')
+        except Exception as e:
+            self._log(f"❌ 生成替换脚本失败：{e}")
+            self._set_status("生成替换脚本失败")
+            return
+
+        self._log(f"已生成替换脚本：{bat_path}")
+        self._log("正在启动替换脚本并退出旧程序…")
+        try:
+            subprocess.Popen([bat_path], shell=False,
+                             creationflags=subprocess.CREATE_NO_WINDOW)
+            self.parent.after(500, self.parent.destroy)
+        except Exception as e:
+            self._log(f"❌ 启动替换脚本失败：{e}")
+            self._set_status("启动替换脚本失败")
+            self.update_btn.config(state="normal")
 
 
 def main():
