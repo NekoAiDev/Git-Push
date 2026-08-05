@@ -13,6 +13,8 @@
 const GITHUB_OWNER = "NekoAiDev";
 const GITHUB_REPO = "Git-Push";
 const UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/dist/GitPush.exe";
+// 安装包（25MB+）走 302 跳转，避开 Worker 对大响应体的限制；浏览器会自动跟随下载
+const INSTALLER_UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/GitPush_Setup.exe";
 
 const LANDING = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -76,19 +78,21 @@ const LANDING = `<!DOCTYPE html>
       </svg>
       <div class="t"><b>Git-Push</b><span>图形化 Git 推送工具 · Windows</span></div>
     </div>
-    <h1>下载 GitPush.exe</h1>
+    <h1>下载 Git-Push 安装包</h1>
     <p class="desc">
-      双击即用的单文件程序，无需安装 Python。<br>
+      推荐：一键安装，自动配置证书、创建开始菜单与桌面快捷方式。<br>
       本页面经 Cloudflare Worker 提供，<br>
       始终分发 <strong>GitHub main 分支最新版</strong>。
     </p>
-    <a class="btn" href="/gitpush.exe" download="GitPush.exe">⬇ 下载 GitPush.exe</a>
+    <a class="btn" href="/GitPush_Setup.exe" download="GitPush_Setup.exe">⬇ 下载安装包（推荐）</a>
     <div class="meta">
-      直接下载链接（可放进更新系统 / 文档）：<br>
+      安装包直接链接（可放进网站 / 文档）：<br>
+      <code>install.nekoaidev.top/GitPush_Setup.exe</code><br>
+      免安装单文件版直接链接：<br>
       <code>install.nekoaidev.top/gitpush.exe</code>
     </div>
     <div class="alt">
-      备用直链：<a href="https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/dist/GitPush.exe" target="_blank" rel="noopener">GitHub raw 版本</a>
+      不想安装？<a href="/gitpush.exe" download="GitPush.exe">下载免安装单文件版 GitPush.exe</a>
     </div>
   </div>
 </body>
@@ -133,6 +137,11 @@ export default {
       headers.delete("content-encoding");
       headers.delete("content-length");
       return new Response(upstreamResp.body, { status: 200, headers });
+    }
+
+    // 2.2) /GitPush_Setup.exe → 302 跳转到 GitHub raw（25MB+ 安装包，避开 Worker 大响应体限制）
+    if (p === "/gitpush_setup.exe" || p === "/gitpush_setup.exe/") {
+      return Response.redirect(INSTALLER_UPSTREAM, 302);
     }
 
     // 2.5) /version.json 与 /update.zip → 代理 GitHub raw（更新系统用）
