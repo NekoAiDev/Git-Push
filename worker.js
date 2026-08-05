@@ -10,6 +10,8 @@
 //   注：jsDelivr 对 .exe 二进制文件返回 403，因此不采用 jsDelivr 作为 exe 分发源
 // - 若将来 exe 体积变得很大（>50MB）触发 Worker 响应限制，可把代理分支改成 302 重定向到 UPSTREAM
 
+const GITHUB_OWNER = "NekoAiDev";
+const GITHUB_REPO = "Git-Push";
 const UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/dist/GitPush.exe";
 
 const LANDING = `<!DOCTYPE html>
@@ -128,6 +130,25 @@ export default {
       headers.set("Content-Type", "application/octet-stream");
       headers.set("Cache-Control", "public, max-age=300");
       // 去掉上游可能带来的、会干扰下载的编码头
+      headers.delete("content-encoding");
+      headers.delete("content-length");
+      return new Response(upstreamResp.body, { status: 200, headers });
+    }
+
+    // 2.5) /version.json 与 /update.zip → 代理 GitHub raw（更新系统用）
+    if (p === "/version.json" || p === "/update.zip") {
+      const rawFile = p === "/version.json" ? "version.json" : "dist/update.zip";
+      const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/main/${rawFile}`;
+      const upstreamResp = await fetch(
+        new Request(rawUrl, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "*/*" } }),
+        { cf: { cacheTtl: 0 } }
+      );
+      if (!upstreamResp.ok) {
+        return Response.redirect(rawUrl, 302);
+      }
+      const headers = new Headers(upstreamResp.headers);
+      headers.set("Content-Type", p === "/version.json" ? "application/json" : "application/octet-stream");
+      headers.set("Cache-Control", "public, max-age=60");
       headers.delete("content-encoding");
       headers.delete("content-length");
       return new Response(upstreamResp.body, { status: 200, headers });
