@@ -6,10 +6,11 @@
 // 说明：
 // - 根路径 /           → 显示下载落地页（内嵌 HTML）
 // - /gitpush.exe       → 流式代理上游 exe，始终是最新版（推完 main 即生效）
-// - 上游走 jsDelivr CDN，比 raw 稳且快；jsDelivr 有分钟级缓存，发版后稍等片刻即同步
+// - 上游使用 GitHub raw（raw.githubusercontent.com），内容跟随 main 分支自动更新
+//   注：jsDelivr 对 .exe 二进制文件返回 403，因此不采用 jsDelivr 作为 exe 分发源
 // - 若将来 exe 体积变得很大（>50MB）触发 Worker 响应限制，可把代理分支改成 302 重定向到 UPSTREAM
 
-const UPSTREAM = "https://cdn.jsdelivr.net/gh/NekoAiDev/Git-Push@main/dist/GitPush.exe";
+const UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/dist/GitPush.exe";
 
 const LANDING = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -85,7 +86,7 @@ const LANDING = `<!DOCTYPE html>
       <code>install.nekoaidev.top/gitpush.exe</code>
     </div>
     <div class="alt">
-      备用 CDN 直链：<a href="https://cdn.jsdelivr.net/gh/NekoAiDev/Git-Push@main/dist/GitPush.exe" target="_blank" rel="noopener">jsDelivr 版本</a>
+      备用直链：<a href="https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/dist/GitPush.exe" target="_blank" rel="noopener">GitHub raw 版本</a>
     </div>
   </div>
 </body>
@@ -108,11 +109,24 @@ export default {
 
     // 2) /gitpush.exe → 流式代理上游 exe（始终最新）
     if (p === "/gitpush.exe" || p === "/gitpush.exe/") {
-      const resp = await fetch(UPSTREAM, { cf: { cacheTtl: 0 } });
-      const headers = new Headers(resp.headers);
+      const upstreamResp = await fetch(UPSTREAM, { cf: { cacheTtl: 0 } });
+
+      // 上游异常时给浏览器一个友好提示，而不是把 403/502 直接丢出去
+      if (!upstreamResp.ok) {
+        const errBody = `上游文件暂时不可用（HTTP ${upstreamResp.status}）。<br>请稍后再试，或直接从 GitHub 下载：<br><a href="${UPSTREAM}">${UPSTREAM}</a>`;
+        return new Response(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>下载失败</title></head><body style="font-family:sans-serif;padding:24px">${errBody}</body></html>`, {
+          status: upstreamResp.status,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+
+      const headers = new Headers(upstreamResp.headers);
       headers.set("Content-Disposition", 'attachment; filename="GitPush.exe"');
+      headers.set("Content-Type", "application/octet-stream");
       headers.set("Cache-Control", "public, max-age=300");
-      return new Response(resp.body, { status: resp.status, headers });
+      // 去掉上游可能带来的、会干扰下载的编码头
+      headers.delete("content-encoding");
+      return new Response(upstreamResp.body, { status: 200, headers });
     }
 
     // 3) 其他 → 404
