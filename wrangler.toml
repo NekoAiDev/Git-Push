@@ -1,0 +1,21 @@
+# Cloudflare Worker 配置（wrangler.toml）
+# 用法：
+#   1. 安装 wrangler：npm i -g wrangler
+#   2. 登录：wrangler login
+#   3. 填好下方 account_id 与 zone_id（Cloudflare 后台「概述」页面右下角可查）
+#   4. 部署：wrangler deploy
+#   5. 自定义域已在 routes 里声明，部署后自动绑定 install.nekoaidev.top
+#
+# 若只用 Cloudflare 后台「Workers → 创建 Worker → 粘贴 worker.js」方式，则不需要本文件。
+
+name = "gitpush-install"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+# 自定义域绑定（需主人在 Cloudflare 填 account_id / zone_id）
+routes = [
+  { pattern = "install.nekoaidev.top", custom_domain = true }
+]
+
+# account_id = "在此填入 Cloudflare 账户 ID"
+# zone_id    = "在此填入 nekoaidev.top 的 Zone ID"

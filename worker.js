@@ -1,0 +1,121 @@
+// Cloudflare Worker：install.nekoaidev.top 分发 GitPush.exe
+// 内容源跟随 GitHub main 分支（经 jsDelivr CDN），自动最新，零文件维护。
+// 落地页内嵌，无需仓库内的 index.html。
+// 部署：Cloudflare 后台「Workers」→ 创建 Worker → 粘贴本文件 → 部署 → 绑自定义域 install.nekoaidev.top
+//
+// 说明：
+// - 根路径 /           → 显示下载落地页（内嵌 HTML）
+// - /gitpush.exe       → 流式代理上游 exe，始终是最新版（推完 main 即生效）
+// - 上游走 jsDelivr CDN，比 raw 稳且快；jsDelivr 有分钟级缓存，发版后稍等片刻即同步
+// - 若将来 exe 体积变得很大（>50MB）触发 Worker 响应限制，可把代理分支改成 302 重定向到 UPSTREAM
+
+const UPSTREAM = "https://cdn.jsdelivr.net/gh/NekoAiDev/Git-Push@main/dist/GitPush.exe";
+
+const LANDING = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Git-Push 下载</title>
+<style>
+  :root{ --git-orange:#FF6B3D; --git-orange-dark:#D73219; }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;
+    background:linear-gradient(135deg,#FFF3ED 0%,#FFE6DA 100%);
+    color:#2b2b2b;min-height:100vh;
+    display:flex;align-items:center;justify-content:center;padding:24px;
+  }
+  .card{
+    background:#fff;border-radius:18px;
+    box-shadow:0 18px 50px rgba(215,50,25,.18);
+    padding:48px 44px;max-width:520px;width:100%;text-align:center;
+  }
+  .badge{
+    display:inline-flex;align-items:center;gap:10px;
+    background:linear-gradient(135deg,var(--git-orange),var(--git-orange-dark));
+    color:#fff;border-radius:14px;padding:16px 18px;margin-bottom:26px;
+    box-shadow:0 8px 20px rgba(215,50,25,.35);
+  }
+  .badge svg{width:34px;height:34px;flex:none;}
+  .badge .t{text-align:left;line-height:1.25;}
+  .badge .t b{font-size:18px;display:block;}
+  .badge .t span{font-size:12px;opacity:.9;}
+  h1{font-size:24px;margin-bottom:10px;}
+  p.desc{color:#666;font-size:14px;line-height:1.7;margin-bottom:28px;}
+  .btn{
+    display:inline-block;text-decoration:none;
+    background:linear-gradient(135deg,var(--git-orange),var(--git-orange-dark));
+    color:#fff;font-size:17px;font-weight:600;
+    padding:15px 38px;border-radius:12px;
+    box-shadow:0 10px 24px rgba(215,50,25,.35);
+    transition:transform .12s ease,box-shadow .12s ease;
+  }
+  .btn:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(215,50,25,.42);}
+  .btn:active{transform:translateY(0);}
+  .meta{margin-top:26px;font-size:12.5px;color:#999;line-height:1.8;border-top:1px solid #f0f0f0;padding-top:18px;}
+  .meta code{background:#f6f6f6;padding:2px 7px;border-radius:6px;color:var(--git-orange-dark);font-size:12px;word-break:break-all;}
+  .alt{margin-top:14px;font-size:12.5px;color:#888;}
+  .alt a{color:#1a73e8;text-decoration:none;}
+  .alt a:hover{text-decoration:underline;}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="6" cy="6" r="2.4" fill="#fff"/>
+        <circle cx="6" cy="18" r="2.4" fill="#fff"/>
+        <circle cx="18" cy="9" r="2.4" fill="#fff"/>
+        <path d="M6 8.4V15.6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M6 6 L16 8.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M14 4 L18 8 L14 12" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="t"><b>Git-Push</b><span>图形化 Git 推送工具 · Windows</span></div>
+    </div>
+    <h1>下载 GitPush.exe</h1>
+    <p class="desc">
+      双击即用的单文件程序，无需安装 Python。<br>
+      本页面经 Cloudflare Worker 提供，<br>
+      始终分发 <strong>GitHub main 分支最新版</strong>。
+    </p>
+    <a class="btn" href="/gitpush.exe" download="GitPush.exe">⬇ 下载 GitPush.exe</a>
+    <div class="meta">
+      直接下载链接（可放进更新系统 / 文档）：<br>
+      <code>install.nekoaidev.top/gitpush.exe</code>
+    </div>
+    <div class="alt">
+      备用 CDN 直链：<a href="https://cdn.jsdelivr.net/gh/NekoAiDev/Git-Push@main/dist/GitPush.exe" target="_blank" rel="noopener">jsDelivr 版本</a>
+    </div>
+  </div>
+</body>
+</html>`;
+
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const p = url.pathname.toLowerCase();
+
+    // 1) 根路径 / 或 /index.html → 内嵌下载落地页
+    if (p === "/" || p === "/index.html") {
+      return new Response(LANDING, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "public, max-age=300",
+        },
+      });
+    }
+
+    // 2) /gitpush.exe → 流式代理上游 exe（始终最新）
+    if (p === "/gitpush.exe" || p === "/gitpush.exe/") {
+      const resp = await fetch(UPSTREAM, { cf: { cacheTtl: 0 } });
+      const headers = new Headers(resp.headers);
+      headers.set("Content-Disposition", 'attachment; filename="GitPush.exe"');
+      headers.set("Cache-Control", "public, max-age=300");
+      return new Response(resp.body, { status: resp.status, headers });
+    }
+
+    // 3) 其他 → 404
+    return new Response("Not Found", { status: 404 });
+  },
+};
