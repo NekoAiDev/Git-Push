@@ -13,7 +13,7 @@
 const GITHUB_OWNER = "NekoAiDev";
 const GITHUB_REPO = "Git-Push";
 const UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/dist/GitPush.exe";
-// 安装包（25MB+）走 302 跳转，避开 Worker 对大响应体的限制；浏览器会自动跟随下载
+// 安装包（25MB+）经 Worker 流式代理：用流式响应绕过 Worker 大响应体缓冲上限，走 Cloudflare 网络比直连 raw.githubusercontent.com 更快
 const INSTALLER_UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/GitPush_Setup.exe";
 
 const LANDING = `<!DOCTYPE html>
@@ -139,9 +139,25 @@ export default {
       return new Response(upstreamResp.body, { status: 200, headers });
     }
 
-    // 2.2) /GitPush_Setup.exe → 302 跳转到 GitHub raw（25MB+ 安装包，避开 Worker 大响应体限制）
+    // 2.2) /GitPush_Setup.exe → 流式代理安装包（25MB+，用流式响应绕过 Worker 大响应体缓冲上限，走 Cloudflare 网络更快）
     if (p === "/gitpush_setup.exe" || p === "/gitpush_setup.exe/") {
-      return Response.redirect(INSTALLER_UPSTREAM, 302);
+      const upstreamReq = new Request(INSTALLER_UPSTREAM, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0",
+          "Accept": "application/octet-stream,*/*",
+        },
+      });
+      const upstreamResp = await fetch(upstreamReq, { cf: { cacheTtl: 0 } });
+      if (!upstreamResp.ok) {
+        return Response.redirect(INSTALLER_UPSTREAM, 302);
+      }
+      const headers = new Headers(upstreamResp.headers);
+      headers.set("Content-Disposition", 'attachment; filename="GitPush_Setup.exe"');
+      headers.set("Content-Type", "application/octet-stream");
+      headers.set("Cache-Control", "public, max-age=300");
+      headers.delete("content-encoding");
+      headers.delete("content-length");
+      return new Response(upstreamResp.body, { status: 200, headers });
     }
 
     // 2.5) /version.json 与 /update.zip → 代理 GitHub raw（更新系统用）
