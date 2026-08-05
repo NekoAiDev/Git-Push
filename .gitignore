@@ -9,3 +9,6 @@ __pycache__/
 # PyInstaller 打包产物（dist/GitPush.exe 另有提交，此处仅忽略中间文件）
 build/
 *.spec
+
+# 本地自签名证书指纹（仅本机工作用，不入库）
+cert_thumbprint.txt
