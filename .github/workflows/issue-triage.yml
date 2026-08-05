@@ -92,7 +92,7 @@ jobs:
               comment += '- 相关日志或截图\n\n';
             }
 
-            comment += '> 此消息由 NekoAiDev Bot 🐱 自动发送';
+            comment += '> 此消息由「NekoBot」自动发送';
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
