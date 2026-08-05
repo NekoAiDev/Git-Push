@@ -1,8 +1,10 @@
 ; GitPush 安装包脚本
 ; 由 Inno Setup 6 (ISCC.exe) 构建
-; 说明：只打包运行所需文件（exe + 图标），排除所有工作文件（.git/.workbuddy/.wrangler/version.json/worker.js 等）
+; 说明：整文件夹递归打包，保留目录结构（主程序在 {app}\dist\GitPush.exe）。
+;       排除工作文件（.git/.workbuddy/.wrangler/.gitignore/worker.js/wrangler.toml）、
+;       构建垃圾（build/__pycache__）与安装包自身，避免套娃与泄露私钥。
 ;       安装过程中自动把自签名证书 GitPush.cer 装入“受信任的根证书颁发机构”，
-;       这样本工具以“NekoAiDev GitPush”发布者身份运行，消除 Windows 的未知发布者/安全警告。
+;       从而让本工具以“NekoAiDev GitPush”发布者身份运行，消除 Windows 的未知发布者/安全警告。
 ; 注：本脚本全部使用绝对路径，避免相对路径/常量展开问题。
 ; 注：语言文件位于 Inno 的 Languages 子目录，必须写成 compiler:Languages\English.isl
 
@@ -16,7 +18,6 @@ DefaultGroupName=GitPush
 OutputDir=D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24
 OutputBaseFilename=GitPush_Setup
 SetupIconFile=D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\appicon.ico
-UninstallDisplayIcon={app}\GitPush.exe
 Compression=lzma2
 SolidCompression=yes
 ; 安装证书到 LocalMachine\Root 需要管理员权限
@@ -29,19 +30,32 @@ DisableProgramGroupPage=no
 Name: "English"; MessagesFile: "compiler:Languages\English.isl"
 
 [Files]
-Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\dist\GitPush.exe"; DestDir: "{app}"; Flags: ignoreversion
-; 证书（仅安装时用，装完删除）
-Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\GitPush.cer"; DestDir: "{tmp}"; Flags: deleteafterinstall
+; 根目录项目文件逐个列出（已排除 .git/.workbuddy/.wrangler/.gitignore/worker.js/wrangler.toml 等工作文件，
+; 以及安装包自身 GitPush_Setup.exe/.iss、构建垃圾 build/__pycache__、临时文件 cert_thumbprint.txt）
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\appicon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\gen_icon.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\git_push_tool.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\GitPush.cer"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\GitPush.spec"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\launch_gitpush.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\make_cert.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\rebuild_update.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\refresh_icon_cache.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\version.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\build_installer.ps1"; DestDir: "{app}"; Flags: ignoreversion
+; dist 目录（运行时必需，递归打包）
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\dist\*"; DestDir: "{app}\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Run]
 ; 安装时把证书装入受信任根（静默执行），从而让本工具以可信发布者身份运行
-Filename: "certutil.exe"; Parameters: "addstore -f ""Root"" ""{tmp}\GitPush.cer"""; StatusMsg: "正在安装受信任证书（用于消除发布者安全警告）..."; Flags: runhidden
-; 安装完成后可选启动
-Filename: "{app}\GitPush.exe"; Description: "启动 GitPush"; Flags: nowait postinstall runasoriginaluser
+Filename: "certutil.exe"; Parameters: "addstore -f ""Root"" ""{app}\GitPush.cer"""; StatusMsg: "正在安装受信任证书（用于消除发布者安全警告）..."; Flags: runhidden
+; 安装完成后可选启动（注意程序在 dist 子目录）
+Filename: "{app}\dist\GitPush.exe"; Description: "启动 GitPush"; Flags: nowait postinstall runasoriginaluser
 
 [Icons]
-Name: "{group}\GitPush"; Filename: "{app}\GitPush.exe"; WorkingDir: "{app}"
-Name: "{commondesktop}\GitPush"; Filename: "{app}\GitPush.exe"; Tasks: desktopicon; WorkingDir: "{app}"
+Name: "{group}\GitPush"; Filename: "{app}\dist\GitPush.exe"; WorkingDir: "{app}\dist"
+Name: "{commondesktop}\GitPush"; Filename: "{app}\dist\GitPush.exe"; Tasks: desktopicon; WorkingDir: "{app}\dist"
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加选项:"
