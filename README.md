@@ -16,13 +16,7 @@
 
 ## 使用方法
 
-方式一（最推荐）：直接下载 `GitPush.exe`，双击即可运行，无需安装 Python。
-
-方式二：双击 `launch_gitpush.bat`，在弹出的窗口中操作。
-
-方式三：命令行运行
-
-    python git_push_tool.py
+直接下载 `GitPush.exe`，双击即可运行，无需安装 Python。
 
 ## 使用前准备
 

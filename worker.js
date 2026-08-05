@@ -109,15 +109,18 @@ export default {
 
     // 2) /gitpush.exe → 流式代理上游 exe（始终最新）
     if (p === "/gitpush.exe" || p === "/gitpush.exe/") {
-      const upstreamResp = await fetch(UPSTREAM, { cf: { cacheTtl: 0 } });
+      // 带上常见浏览器 UA，避免 GitHub raw 把 Worker 请求当机器人拦截
+      const upstreamReq = new Request(UPSTREAM, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0",
+          "Accept": "application/octet-stream,*/*",
+        },
+      });
+      const upstreamResp = await fetch(upstreamReq, { cf: { cacheTtl: 0 } });
 
-      // 上游异常时给浏览器一个友好提示，而不是把 403/502 直接丢出去
+      // 上游异常时，让浏览器直接跳去 GitHub raw（通常不会被浏览器拦截）
       if (!upstreamResp.ok) {
-        const errBody = `上游文件暂时不可用（HTTP ${upstreamResp.status}）。<br>请稍后再试，或直接从 GitHub 下载：<br><a href="${UPSTREAM}">${UPSTREAM}</a>`;
-        return new Response(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>下载失败</title></head><body style="font-family:sans-serif;padding:24px">${errBody}</body></html>`, {
-          status: upstreamResp.status,
-          headers: { "Content-Type": "text/html; charset=utf-8" },
-        });
+        return Response.redirect(UPSTREAM, 302);
       }
 
       const headers = new Headers(upstreamResp.headers);
@@ -126,6 +129,7 @@ export default {
       headers.set("Cache-Control", "public, max-age=300");
       // 去掉上游可能带来的、会干扰下载的编码头
       headers.delete("content-encoding");
+      headers.delete("content-length");
       return new Response(upstreamResp.body, { status: 200, headers });
     }
 
