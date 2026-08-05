@@ -29,7 +29,7 @@ import urllib.request
 from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 GITHUB_OWNER = "NekoAiDev"
 GITHUB_REPO = "Git-Push"
@@ -641,9 +641,22 @@ class Updater:
             self.update_btn.config(state="normal")
 
 
+def resource_path(rel):
+    """获取资源文件的真实路径：打包后从 _MEIPASS 取，开发模式下从脚本目录取 喵~"""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
+
+
 def main():
     try:
         root = tk.Tk()
+        # 应用专属图标（Git 橙 + 推送箭头）
+        try:
+            _icon = resource_path("appicon.ico")
+            if os.path.exists(_icon):
+                root.iconbitmap(_icon)
+        except Exception:
+            pass
         try:
             # 用安全字体名设置全局默认字体（避免中文字体名被 Tcl 误解析）
             default_font = tkfont.nametofont("TkDefaultFont")

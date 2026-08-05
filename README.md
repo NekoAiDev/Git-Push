@@ -11,6 +11,7 @@
 - 提供可选的强制推送开关（默认关闭，避免误操作）
 - 对 git 命令输出做了空值防护，兼容不同环境
 - 内置自动更新：菜单栏「更新(U)」→「检查更新」，拉取 GitHub Releases 最新版并自动替换 exe
+- 专属 Git 风格应用图标：任务栏、窗口标题栏与 `GitPush.exe` 文件图标统一
 
 ## 使用方法
 
@@ -48,6 +49,7 @@
 - `git_push_tool.py`：工具主程序
 - `launch_gitpush.bat`：Windows 下一键启动脚本
 - `dist/GitPush.exe`：打包好的 Windows 单文件可执行程序
+- `appicon.ico`：应用图标文件（Git 橙渐变 + 推送箭头 + 分支节点）
 
 ## 许可
 
