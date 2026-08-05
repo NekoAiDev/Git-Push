@@ -12,6 +12,7 @@
 - 对 git 命令输出做了空值防护，兼容不同环境
 - 内置自动更新：菜单栏「更新(U)」→「检查更新」，拉取 GitHub Releases 最新版并自动替换 exe
 - 专属 Git 风格应用图标：任务栏、窗口标题栏与 `GitPush.exe` 文件图标统一
+- 自签名数字签名：`GitPush.exe` 附带代码签名证书（右键 → 属性 → 数字签名可查看）
 
 ## 使用方法
 
@@ -50,6 +51,23 @@
 - `launch_gitpush.bat`：Windows 下一键启动脚本
 - `dist/GitPush.exe`：打包好的 Windows 单文件可执行程序
 - `appicon.ico`：应用图标文件（Git 橙渐变 + 推送箭头 + 分支节点）
+- `refresh_icon_cache.bat`：刷新 Windows 图标缓存脚本（图标显示异常时运行）
+
+## 图标没显示出来？
+
+如果下载 `GitPush.exe` 后，资源管理器里看到的是一个默认程序图标而不是橙色 Git 图标，那是 Windows 图标缓存还没刷新。请双击运行仓库里的 `refresh_icon_cache.bat`，或手动执行以下命令：
+
+    taskkill /f /im explorer.exe
+    del /f /s /q %localappdata%\IconCache.db
+    start explorer.exe
+
+刷新后重新打开文件夹即可看到新图标。
+
+## 数字签名说明
+
+从 v1.1.2 起，`GitPush.exe` 会附带一个自签名的代码签名证书。右键 exe →「属性」→「数字签名」可以看到签名信息。
+
+> 自签名证书默认不会被 Windows 自动信任，所以 SmartScreen 仍可能提示「未知发布者」。如需消除提示，需要把证书安装到系统的「受信任的根证书颁发机构」存储中；普通使用直接双击运行即可。
 
 ## 许可
 
