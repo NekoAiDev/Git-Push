@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Git-Push 下载</title>
+<style>
+  :root{
+    --git-orange:#FF6B3D;
+    --git-orange-dark:#D73219;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;
+    background:linear-gradient(135deg,#FFF3ED 0%,#FFE6DA 100%);
+    color:#2b2b2b;
+    min-height:100vh;
+    display:flex;align-items:center;justify-content:center;
+    padding:24px;
+  }
+  .card{
+    background:#fff;
+    border-radius:18px;
+    box-shadow:0 18px 50px rgba(215,50,25,.18);
+    padding:48px 44px;
+    max-width:520px;width:100%;
+    text-align:center;
+  }
+  .badge{
+    display:inline-flex;align-items:center;gap:10px;
+    background:linear-gradient(135deg,var(--git-orange),var(--git-orange-dark));
+    color:#fff;border-radius:14px;
+    padding:16px 18px;margin-bottom:26px;
+    box-shadow:0 8px 20px rgba(215,50,25,.35);
+  }
+  .badge svg{width:34px;height:34px;flex:none;}
+  .badge .t{text-align:left;line-height:1.25;}
+  .badge .t b{font-size:18px;display:block;}
+  .badge .t span{font-size:12px;opacity:.9;}
+  h1{font-size:24px;margin-bottom:10px;}
+  p.desc{color:#666;font-size:14px;line-height:1.7;margin-bottom:28px;}
+  .btn{
+    display:inline-block;text-decoration:none;
+    background:linear-gradient(135deg,var(--git-orange),var(--git-orange-dark));
+    color:#fff;font-size:17px;font-weight:600;
+    padding:15px 38px;border-radius:12px;
+    box-shadow:0 10px 24px rgba(215,50,25,.35);
+    transition:transform .12s ease,box-shadow .12s ease;
+  }
+  .btn:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(215,50,25,.42);}
+  .btn:active{transform:translateY(0);}
+  .meta{
+    margin-top:26px;font-size:12.5px;color:#999;line-height:1.8;
+    border-top:1px solid #f0f0f0;padding-top:18px;
+  }
+  .meta code{
+    background:#f6f6f6;padding:2px 7px;border-radius:6px;
+    color:var(--git-orange-dark);font-size:12px;word-break:break-all;
+  }
+  .alt{margin-top:14px;font-size:12.5px;color:#888;}
+  .alt a{color:#1a73e8;text-decoration:none;}
+  .alt a:hover{text-decoration:underline;}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="6" cy="6" r="2.4" fill="#fff"/>
+        <circle cx="6" cy="18" r="2.4" fill="#fff"/>
+        <circle cx="18" cy="9" r="2.4" fill="#fff"/>
+        <path d="M6 8.4V15.6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M6 6 L16 8.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M14 4 L18 8 L14 12" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="t"><b>Git-Push</b><span>图形化 Git 推送工具 · Windows</span></div>
+    </div>
+    <h1>下载 GitPush.exe</h1>
+    <p class="desc">
+      双击即用的单文件程序，无需安装 Python。<br>
+      本页面跟随 GitHub <code style="background:none;padding:0;color:#D73219;">main</code> 分支自动部署，<br>
+      始终提供<strong>最新版本</strong>。
+    </p>
+    <a class="btn" href="gitpush.exe" download="GitPush.exe">⬇ 下载 GitPush.exe</a>
+    <div class="meta">
+      直接下载链接（可放进更新系统 / 文档）：<br>
+      <code>install.nekoaidev.top/gitpush.exe</code>
+    </div>
+    <div class="alt">
+      备用 CDN 直链：<a href="https://cdn.jsdelivr.net/gh/NekoAiDev/Git-Push@main/dist/GitPush.exe" target="_blank" rel="noopener">jsDelivr 版本</a>
+    </div>
+  </div>
+</body>
+</html>
