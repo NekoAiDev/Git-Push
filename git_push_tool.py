@@ -510,7 +510,7 @@ class Updater:
                 self._log(f"正在请求版本信息：{VERSION_JSON_URL}")
                 req = urllib.request.Request(
                     url,
-                    headers={"User-Agent": f"GitPushTool/{self.current_version}"},
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
                 )
                 with urllib.request.urlopen(req, timeout=20) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
@@ -573,7 +573,7 @@ class Updater:
 
             req = urllib.request.Request(
                 self.update_url,
-                headers={"User-Agent": f"GitPushTool/{self.current_version}"},
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
             )
             with urllib.request.urlopen(req, timeout=180) as resp:
                 total = int(resp.headers.get("Content-Length", 0))
