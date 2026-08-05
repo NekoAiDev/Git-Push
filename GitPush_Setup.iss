@@ -9,12 +9,12 @@
 ; 注：语言文件位于 Inno 的 Languages 子目录，必须写成 compiler:Languages\English.isl
 
 [Setup]
-AppName=GitPush
+AppName=Git Push
 AppVersion=1.2.0
-AppVerName=GitPush 1.2.0
+AppVerName=Git Push 1.2.0
 AppPublisher=NekoAiDev
-DefaultDirName={autopf}\GitPush
-DefaultGroupName=GitPush
+DefaultDirName={autopf}\Git Push
+DefaultGroupName=Git Push
 OutputDir=D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24
 OutputBaseFilename=GitPush_Setup
 SetupIconFile=D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\appicon.ico

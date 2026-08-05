@@ -1,11 +1,12 @@
-// Cloudflare Worker：install.nekoaidev.top 分发 GitPush.exe
-// 内容源跟随 GitHub main 分支（经 jsDelivr CDN），自动最新，零文件维护。
-// 落地页内嵌，无需仓库内的 index.html。
+// Cloudflare Worker：install.nekoaidev.top 分发 GitPush
+// 内容源跟随 GitHub main 分支，自动最新，零文件维护。
 // 部署：Cloudflare 后台「Workers」→ 创建 Worker → 粘贴本文件 → 部署 → 绑自定义域 install.nekoaidev.top
 //
 // 说明：
 // - 根路径 /           → 显示下载落地页（内嵌 HTML）
-// - /gitpush.exe       → 流式代理上游 exe，始终是最新版（推完 main 即生效）
+// - /gitpush.exe       → 流式代理上游 exe（cacheTtl=300，5 分钟边缘缓存，兼顾速度与新版本生效）
+// - /GitPush_Setup.exe → 流式代理上游安装包（cacheTtl=300）
+// - /version.json /update.zip → 更新系统用（cacheTtl=300）
 // - 上游使用 GitHub raw（raw.githubusercontent.com），内容跟随 main 分支自动更新
 //   注：jsDelivr 对 .exe 二进制文件返回 403，因此不采用 jsDelivr 作为 exe 分发源
 // - 若将来 exe 体积变得很大（>50MB）触发 Worker 响应限制，可把代理分支改成 302 重定向到 UPSTREAM
@@ -122,7 +123,7 @@ export default {
           "Accept": "application/octet-stream,*/*",
         },
       });
-      const upstreamResp = await fetch(upstreamReq, { cf: { cacheTtl: 0 } });
+      const upstreamResp = await fetch(upstreamReq, { cf: { cacheTtl: 300 } });
 
       // 上游异常时，让浏览器直接跳去 GitHub raw（通常不会被浏览器拦截）
       if (!upstreamResp.ok) {
@@ -147,7 +148,7 @@ export default {
           "Accept": "application/octet-stream,*/*",
         },
       });
-      const upstreamResp = await fetch(upstreamReq, { cf: { cacheTtl: 0 } });
+      const upstreamResp = await fetch(upstreamReq, { cf: { cacheTtl: 300 } });
       if (!upstreamResp.ok) {
         return Response.redirect(INSTALLER_UPSTREAM, 302);
       }
@@ -166,7 +167,7 @@ export default {
       const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/main/${rawFile}`;
       const upstreamResp = await fetch(
         new Request(rawUrl, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "*/*" } }),
-        { cf: { cacheTtl: 0 } }
+        { cf: { cacheTtl: 300 } }
       );
       if (!upstreamResp.ok) {
         return Response.redirect(rawUrl, 302);
