@@ -1,0 +1,5 @@
+{
+  "version": "1.2.0",
+  "notes": "v1.2.0\n- 重写更新系统：从 GitHub 读取版本信息，下载压缩包自动解压替换并重启\n- 更新按钮按版本状态变灰（无需更新）或可点（立即更新）\n- 安装目录无写权限时自动请求管理员提权",
+  "update_url": "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/dist/update.zip"
+}
