@@ -1,0 +1,76 @@
+name: PR Auto Check & Link
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+
+jobs:
+  pr-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR title format
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
+            const validPrefixes = [
+              /^feat:/i,
+              /^fix:/i,
+              /^docs:/i,
+              /^style:/i,
+              /^refactor:/i,
+              /^perf:/i,
+              /^test:/i,
+              /^chore:/i,
+              /^build:/i,
+              /^ci:/i,
+              /^release:/i,
+              /^Bump|^Update|^Add|^Fix|^Remove|^Improve|^Refactor/i
+            ];
+
+            const isValid = validPrefixes.some(regex => regex.test(title));
+
+            if (!isValid) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.pull_request.number,
+                body: `## ⚠️ PR 标题格式提醒\n\n` +
+                      `你的 PR 标题不符合约定格式。\n\n` +
+                      `**推荐前缀：**\n` +
+                      `- \`feat:\` - 新功能\n` +
+                      `- \`fix:\` - 修复 Bug\n` +
+                      `- \`docs:\` - 文档更新\n` +
+                      `- \`refactor:\` - 代码重构\n` +
+                      `- \`chore:\` - 维护工作\n\n` +
+                      `示例：\`feat: 添加自动标签工作流\`\n\n` +
+                      `> 这只是建议，不会影响合并。`
+              });
+            }
+
+      - name: Check for linked issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const issueRegex = /(?:fixes|closes|resolves|关闭|修复|解决)\s*#(\d+)/gi;
+            const matches = body.match(issueRegex);
+
+            if (!matches) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.pull_request.number,
+                body: `## 💡 提示：关联 Issue\n\n` +
+                      `这个 PR 似乎没有关联任何 Issue。\n\n` +
+                      `你可以在描述中添加以下关键词，PR 合并时自动关闭对应 Issue：\n` +
+                      `- \`Fixes #123\` 或 \`Closes #123\`\n` +
+                      `- \`关闭 #123\` 或 \`修复 #123\`\n\n` +
+                      `> 这只是建议，不会影响合并。`
+              });
+            }
