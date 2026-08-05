@@ -27,7 +27,7 @@ WizardStyle=modern
 DisableProgramGroupPage=no
 
 [Languages]
-Name: "English"; MessagesFile: "compiler:Languages\English.isl"
+Name: "ChineseSimplified"; MessagesFile: "ChineseSimplified.isl"
 
 [Files]
 ; 根目录项目文件逐个列出（已排除 .git/.workbuddy/.wrangler/.gitignore/worker.js/wrangler.toml 等工作文件，
