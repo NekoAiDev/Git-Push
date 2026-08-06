@@ -30,7 +30,7 @@ import urllib.request
 from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 
 GITHUB_OWNER = "NekoAiDev"
 GITHUB_REPO = "Git-Push"
@@ -53,8 +53,9 @@ class GitPushTool:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(f"{APP_TITLE}  v{APP_VERSION}")
-        self.root.geometry("760x680")
-        self.root.minsize(640, 560)
+        self.root.geometry("720x620")
+        self.root.minsize(640, 520)
+        self.root.maxsize(900, 800)
         try:
             # 尝试给窗口加个小图标感（无图标文件时忽略）
             pass
@@ -153,14 +154,13 @@ class GitPushTool:
                                    command=self.start_push)
         self.push_btn.pack(fill="x", padx=12, pady=(4, 8))
 
-        # 日志区
+        # 日志区（固定高度，不无限撑大，避免把底部状态栏挤出屏幕）
         log_frm = ttk.LabelFrame(self.root, text="运行日志", padding=(8, 6))
-        log_frm.pack(fill="both", expand=True, padx=12, pady=(0, 6))
-        log_frm.rowconfigure(0, weight=1)
-        log_frm.columnconfigure(0, weight=1)
+        log_frm.pack(fill="x", padx=12, pady=(0, 6))
 
         self.log_box = scrolledtext.ScrolledText(log_frm, wrap="word",
-                                                  font=("Consolas", 10))
+                                                  font=("Consolas", 10),
+                                                  height=10)
         self.log_box.pack(fill="both", expand=True)
         self.log_box.configure(state="disabled")
 
