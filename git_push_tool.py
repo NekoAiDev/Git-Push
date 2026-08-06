@@ -28,9 +28,10 @@ import threading
 import tkinter as tk
 import urllib.request
 from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
+import webbrowser
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 
 GITHUB_OWNER = "NekoAiDev"
 GITHUB_REPO = "Git-Push"
@@ -175,6 +176,7 @@ class GitPushTool:
 
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="使用说明", command=self._show_help)
+        help_menu.add_command(label="问题反馈", command=self._open_issues)
         help_menu.add_command(label="关于", command=self._show_about)
         menubar.add_cascade(label="帮助", menu=help_menu)
 
@@ -390,6 +392,13 @@ class GitPushTool:
         messagebox.showinfo("关于",
                             f"{APP_TITLE}\n版本 {APP_VERSION}\n\n"
                             "由小红蛋精心编写的Git 推送工具")
+
+    def _open_issues(self):
+        issues_url = "https://github.com/NekoAiDev/Git-Push/issues"
+        try:
+            webbrowser.open(issues_url, new=2)
+        except Exception as e:
+            messagebox.showerror("打开失败", f"无法打开浏览器：{e}\n可手动访问：{issues_url}")
 
     # ---------------------------------------------------------------- 更新
     def _open_updater(self):

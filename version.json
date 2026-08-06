@@ -1,5 +1,5 @@
 {
-  "version": "1.2.5",
-  "notes": "v1.2.5\n- 修复：主窗口运行日志区域无限撑高，把底部状态栏「就绪，请选择文件夹并填写仓库地址」挤出屏幕的问题\n- 优化：主窗口默认大小调整为 720x620，限制最大尺寸 900x800\n- 优化：主窗口日志区改为固定高度（height=10），不再向下无限 expand\n- 优化：更新窗口大绿按钮始终可见，日志区固定高度不抢空间",
+  "version": "1.2.6",
+  "notes": "v1.2.6\n- 新增：帮助菜单增加「问题反馈」入口，一键打开 GitHub Issues 反馈页\n  https://github.com/NekoAiDev/Git-Push/issues\n- 优化：主窗口状态栏与更新窗口按钮在各类缩放下始终可见\n- 优化：自动更新下载链接带时间戳，绕过缓存拉到最新版",
   "update_url": "https://install.nekoaidev.top/update.zip"
 }
