@@ -30,7 +30,7 @@ import urllib.request
 from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.2.3"
+APP_VERSION = "1.2.4"
 
 GITHUB_OWNER = "NekoAiDev"
 GITHUB_REPO = "Git-Push"
@@ -77,7 +77,7 @@ class GitPushTool:
                 "安装后重启本工具即可~"
             )
         else:
-            self.set_status("就绪，请选择文件夹并填写仓库地址喵~")
+            self.set_status("就绪，请选择文件夹并填写仓库地址")
 
     # ---------------------------------------------------------------- UI
     def _build_styles(self):
@@ -415,8 +415,9 @@ class Updater:
     def show(self):
         self.window = tk.Toplevel(self.parent)
         self.window.title("检查更新")
-        self.window.geometry("600x600")
-        self.window.minsize(520, 460)
+        self.window.geometry("520x560")
+        self.window.minsize(480, 480)
+        self.window.maxsize(720, 700)
         self.window.transient(self.parent)
         self.window.grab_set()
         self.window.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -442,14 +443,23 @@ class Updater:
                                padx=12, pady=10, anchor="center")
         self.banner.pack(fill="x", padx=14, pady=(2, 8))
 
-        # 更新说明（主区域，字体放大，看得清）
+        # 更新说明（固定高度，不撑大窗口，保证按钮始终可见）
         note_frm = ttk.LabelFrame(self.window, text="更新说明", padding=(10, 8))
-        note_frm.pack(fill="both", expand=True, padx=14, pady=(0, 8))
+        note_frm.pack(fill="x", padx=14, pady=(0, 8))
         self.note_box = scrolledtext.ScrolledText(note_frm, wrap="word",
                                                   font=("Microsoft YaHei", 11),
-                                                  relief="flat", bd=0, padx=6, pady=4)
+                                                  relief="flat", bd=0, padx=6, pady=4,
+                                                  height=10)
         self.note_box.pack(fill="both", expand=True)
         self.note_box.configure(state="disabled")
+
+        # 运行日志（默认隐藏，固定高度，不撑大窗口）
+        self.log_frm = ttk.LabelFrame(self.window, text="运行日志（调试用）", padding=(8, 6))
+        self.log_box = scrolledtext.ScrolledText(self.log_frm, wrap="word",
+                                                 font=("Consolas", 9), height=6)
+        self.log_box.pack(fill="both", expand=True)
+        self.log_box.configure(state="disabled")
+        self.log_visible = False
 
         # 立即更新按钮（超大、彩色、占满一行，绝对不会看不到）
         self.update_btn = tk.Button(self.window, text="立即更新",
@@ -468,14 +478,6 @@ class Updater:
                                      command=self._toggle_log)
         self.toggle_btn.pack(side="left")
         ttk.Button(bottom_frm, text="关闭", command=self._on_close).pack(side="right")
-
-        # 运行日志（默认隐藏，避免干扰主内容）
-        self.log_frm = ttk.LabelFrame(self.window, text="运行日志（调试用）", padding=(8, 6))
-        self.log_box = scrolledtext.ScrolledText(self.log_frm, wrap="word",
-                                                 font=("Consolas", 9))
-        self.log_box.pack(fill="both", expand=True)
-        self.log_box.configure(state="disabled")
-        self.log_visible = False
 
         self._fetch_info()
 
@@ -536,8 +538,8 @@ class Updater:
     def _toggle_log(self):
         self.log_visible = not self.log_visible
         if self.log_visible:
-            self.log_frm.pack(fill="both", expand=True, padx=14, pady=(0, 8),
-                              before=self.update_btn)
+            # 日志区域固定高度，fill=x 横向撑满，但不 expand，避免把按钮挤出窗口
+            self.log_frm.pack(fill="x", padx=14, pady=(0, 8), before=self.update_btn)
             self.toggle_btn.config(text="▲ 隐藏运行日志")
         else:
             self.log_frm.pack_forget()
@@ -640,8 +642,13 @@ class Updater:
             zip_path = os.path.join(tmp_dir, "GitPush_update.zip")
             self._log(f"下载目标：{zip_path}")
 
+            # 给更新包 URL 加时间戳，强制绕过 Worker / 中间缓存，确保每次拿到最新版
+            sep = "&" if "?" in self.update_url else "?"
+            url = f"{self.update_url}{sep}t={int(time.time())}"
+            self._log(f"实际下载地址：{url}")
+
             req = urllib.request.Request(
-                self.update_url,
+                url,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
             )
             with urllib.request.urlopen(req, timeout=180) as resp:
@@ -687,7 +694,7 @@ class Updater:
             self._set_status("找不到安装目录")
             return
 
-        # 生成替换脚本：检测写权限 → 无则提权 → 等旧进程退出 → 解压覆盖 → 启动新程序 → 清理
+        # 生成替换脚本：检测写权限 → 无则提权 → 等旧进程退出 → 备份旧程序 → 解压覆盖 → 校验 → 启动新程序 → 清理
         bat_path = os.path.join(tempfile.gettempdir(), "update_gitpush.bat")
         bat = (
             "@echo off\n"
@@ -704,13 +711,37 @@ class Updater:
             '  exit /b\n'
             ')\n'
             "echo 正在更新 Git Push 工具，请稍候…\n"
-            "timeout /t 2 /nobreak >nul\n"
-            'powershell -NoProfile -Command "Expand-Archive -Path \'%ZIP%\' -DestinationPath \'%INSTALL_DIR%\' -Force"\n'
+            ":: 等待旧 GitPush.exe 进程完全退出，避免覆盖失败\n"
+            'for /L %%i in (1,1,30) do (\n'
+            '  tasklist /FI "IMAGENAME eq GitPush.exe" /NH | find /I "GitPush.exe" >nul 2>&1\n'
+            '  if errorlevel 1 goto :proc_done\n'
+            '  timeout /t 1 /nobreak >nul\n'
+            ')\n'
+            ":proc_done\n"
+            "timeout /t 1 /nobreak >nul\n"
+            'if exist "%INSTALL_DIR%\\GitPush.exe" (\n'
+            '  echo 正在备份旧程序…\n'
+            '  move /Y "%INSTALL_DIR%\\GitPush.exe" "%INSTALL_DIR%\\GitPush.exe.old" >nul 2>&1\n'
+            ')\n'
+            'powershell -NoProfile -Command "try { Expand-Archive -Path \'%ZIP%\' -DestinationPath \'%INSTALL_DIR%\' -Force } catch { Write-Host \"解压失败: $_\"; exit 1 }"\n'
             "if %errorlevel% neq 0 (\n"
             '  echo 解压失败，请手动用 %ZIP% 覆盖 %INSTALL_DIR%\n'
             "  pause\n"
             "  exit /b 1\n"
             ")\n"
+            ":: 校验新程序是否生成且大小合理\n"
+            'if not exist "%INSTALL_DIR%\\GitPush.exe" (\n'
+            '  echo 更新失败：GitPush.exe 未生成\n'
+            '  pause\n'
+            '  exit /b 1\n'
+            ')\n'
+            'for %%F in ("%INSTALL_DIR%\\GitPush.exe") do if %%~zF LSS 1000000 (\n'
+            '  echo 更新失败：GitPush.exe 大小异常（%%~zF 字节）\n'
+            '  pause\n'
+            '  exit /b 1\n'
+            ')\n'
+            'del "%INSTALL_DIR%\\GitPush.exe.old" >nul 2>&1\n'
+            "echo 更新完成，正在启动新版本…\n"
             'start "" "%INSTALL_DIR%\\GitPush.exe"\n'
             'del "%ZIP%" >nul 2>&1\n'
             'del "%~f0" >nul 2>&1\n'

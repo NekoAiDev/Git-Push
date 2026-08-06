@@ -6,7 +6,7 @@
 // - 根路径 /           → 显示下载落地页（内嵌 HTML）
 // - /gitpush.exe       → 流式代理上游 exe（cacheTtl=300，5 分钟边缘缓存，兼顾速度与新版本生效）
 // - /GitPush_Setup.exe → 流式代理上游安装包（cacheTtl=300）
-// - /version.json /update.zip → 更新系统用（cacheTtl=300）
+// - /version.json /update.zip → 更新系统用（cacheTtl=0，不缓存，确保永远拿到最新版）
 // - 上游使用 GitHub raw（raw.githubusercontent.com），内容跟随 main 分支自动更新
 //   注：jsDelivr 对 .exe 二进制文件返回 403，因此不采用 jsDelivr 作为 exe 分发源
 // - 若将来 exe 体积变得很大（>50MB）触发 Worker 响应限制，可把代理分支改成 302 重定向到 UPSTREAM
@@ -161,13 +161,13 @@ export default {
       return new Response(upstreamResp.body, { status: 200, headers });
     }
 
-    // 2.5) /version.json 与 /update.zip → 代理 GitHub raw（更新系统用）
+    // 2.5) /version.json 与 /update.zip → 代理 GitHub raw（更新系统用，不缓存）
     if (p === "/version.json" || p === "/update.zip") {
       const rawFile = p === "/version.json" ? "version.json" : "dist/update.zip";
       const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/main/${rawFile}`;
       const upstreamResp = await fetch(
         new Request(rawUrl, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "*/*" } }),
-        { cf: { cacheTtl: 300 } }
+        { cf: { cacheTtl: 0 } }
       );
       if (!upstreamResp.ok) {
         return Response.redirect(rawUrl, 302);
