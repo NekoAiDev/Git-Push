@@ -8,7 +8,8 @@ __pycache__/
 
 # PyInstaller 打包产物（dist/GitPush.exe 另有提交，此处仅忽略中间文件）
 build/
-*.spec
+# 注意：GitPush.spec 是手工维护的打包配方，不是自动生成的中间文件，需要跟踪；
+# 如果以后生成其他临时 spec 备份，再单独加规则（如 *.spec.bak）。
 
 # 本地自签名证书指纹（仅本机工作用，不入库）
 cert_thumbprint.txt
