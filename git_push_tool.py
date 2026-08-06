@@ -30,7 +30,7 @@ import urllib.request
 from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 GITHUB_OWNER = "NekoAiDev"
 GITHUB_REPO = "Git-Push"
@@ -326,11 +326,34 @@ class GitPushTool:
             else:
                 self.run(["git", "remote", "add", remote, repo], repo_dir)
 
+            # 6.5) 确定要推送的本地 ref —— 修复 issue #2「src refspec main does not match any」
+            # 当本地不存在用户填写的分支名时（例如本地当前分支是 master，但默认填了 main），
+            # 直接 push <branch> 会失败。这里先探测本地分支，再用正确的 refspec 推送。
+            local_branches = [b.strip() for b in
+                              self._git_out(["branch", "--format=%(refname:short)"], repo_dir).split()
+                              if b.strip()]
+            head_branch = self._git_out(["rev-parse", "--abbrev-ref", "HEAD"], repo_dir).strip()
+
+            if branch in local_branches:
+                push_ref = branch
+            elif head_branch and head_branch != "HEAD" and head_branch in local_branches:
+                push_ref = f"{head_branch}:{branch}"
+                self.log(f"ℹ️ 本地没有名为 '{branch}' 的分支，将把当前分支 '{head_branch}' 推送到远程分支 '{branch}'")
+            else:
+                self.log(f"⚠️ 本地不存在分支 '{branch}'，也没有其他可推送的本地分支。")
+                if not local_branches:
+                    self.log("   这看起来是个还没有任何提交的新仓库——请先添加文件再提交。")
+                self.log("   若为分支名填写错误，请修改「分支」框后重试。")
+                self.set_status("❌ 推送失败：本地无对应分支")
+                self.running = False
+                self.root.after(0, lambda: self.push_btn.config(state="normal"))
+                return
+
             # 7) git push
             cmd = ["git", "push"]
             if force:
                 cmd.append("--force")
-            cmd += ["-u", remote, branch]
+            cmd += ["-u", remote, push_ref]
             rc = self.run(cmd, repo_dir)
 
             if rc == 0:
