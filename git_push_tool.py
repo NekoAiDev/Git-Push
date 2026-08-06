@@ -30,7 +30,7 @@ import urllib.request
 from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.2.2"
 
 GITHUB_OWNER = "NekoAiDev"
 GITHUB_REPO = "Git-Push"
@@ -415,48 +415,67 @@ class Updater:
     def show(self):
         self.window = tk.Toplevel(self.parent)
         self.window.title("检查更新")
-        self.window.geometry("560x480")
-        self.window.minsize(480, 360)
+        self.window.geometry("600x600")
+        self.window.minsize(520, 460)
         self.window.transient(self.parent)
         self.window.grab_set()
         self.window.protocol("WM_DELETE_WINDOW", self._on_close)
 
         ttk.Label(self.window, text="Git Push 工具更新",
-                  style="Title.TLabel").pack(anchor="w", padx=12, pady=(10, 2))
+                  style="Title.TLabel").pack(anchor="w", padx=14, pady=(12, 2))
         ttk.Label(self.window, text="从 GitHub 读取最新版本信息",
-                  style="Small.TLabel").pack(anchor="w", padx=12)
+                  style="Small.TLabel").pack(anchor="w", padx=14)
 
+        # 版本对比行
         info_frm = ttk.Frame(self.window)
-        info_frm.pack(fill="x", padx=12, pady=8)
-        ttk.Label(info_frm, text="当前版本：").grid(row=0, column=0, sticky="w")
-        ttk.Label(info_frm, text=self.current_version).grid(row=0, column=1, sticky="w")
-        ttk.Label(info_frm, text="远程版本：").grid(row=1, column=0, sticky="w", pady=4)
-        self.remote_ver_label = ttk.Label(info_frm, text="正在检查…")
-        self.remote_ver_label.grid(row=1, column=1, sticky="w")
-        ttk.Label(info_frm, text="更新状态：").grid(row=2, column=0, sticky="w")
-        self.status_var = tk.StringVar(value="正在连接 GitHub …")
-        ttk.Label(info_frm, textvariable=self.status_var).grid(row=2, column=1, sticky="w")
+        info_frm.pack(fill="x", padx=14, pady=(8, 6))
+        ttk.Label(info_frm, text="当前版本：", font=("Microsoft YaHei", 10)).grid(row=0, column=0, sticky="w")
+        ttk.Label(info_frm, text=self.current_version, font=("Microsoft YaHei", 10, "bold")).grid(row=0, column=1, sticky="w", padx=(4, 18))
+        ttk.Label(info_frm, text="远程版本：", font=("Microsoft YaHei", 10)).grid(row=0, column=2, sticky="w")
+        self.remote_ver_label = ttk.Label(info_frm, text="正在检查…", font=("Microsoft YaHei", 10, "bold"))
+        self.remote_ver_label.grid(row=0, column=3, sticky="w")
 
-        note_frm = ttk.LabelFrame(self.window, text="更新说明", padding=(8, 6))
-        note_frm.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+        # 醒目状态横幅（一眼可见：有新版本 / 已最新 / 失败）
+        self.banner = tk.Label(self.window, text="正在连接 GitHub，请稍候…",
+                               font=("Microsoft YaHei", 12, "bold"),
+                               bg="#FFF4CC", fg="#8a6d00", relief="flat",
+                               padx=12, pady=10, anchor="center")
+        self.banner.pack(fill="x", padx=14, pady=(2, 8))
+
+        # 更新说明（主区域，字体放大，看得清）
+        note_frm = ttk.LabelFrame(self.window, text="更新说明", padding=(10, 8))
+        note_frm.pack(fill="both", expand=True, padx=14, pady=(0, 8))
         self.note_box = scrolledtext.ScrolledText(note_frm, wrap="word",
-                                                  font=("Segoe UI", 10))
+                                                  font=("Microsoft YaHei", 11),
+                                                  relief="flat", bd=0, padx=6, pady=4)
         self.note_box.pack(fill="both", expand=True)
         self.note_box.configure(state="disabled")
 
-        log_frm = ttk.LabelFrame(self.window, text="更新日志", padding=(8, 6))
-        log_frm.pack(fill="both", expand=True, padx=12, pady=(0, 6))
-        self.log_box = scrolledtext.ScrolledText(log_frm, wrap="word",
-                                                  font=("Consolas", 9))
+        # 立即更新按钮（超大、彩色、占满一行，绝对不会看不到）
+        self.update_btn = tk.Button(self.window, text="立即更新",
+                                     command=self._do_update, state="disabled",
+                                     font=("Microsoft YaHei", 13, "bold"),
+                                     bg="#d9d9d9", fg="#888888",
+                                     activebackground="#2f7a2f", activeforeground="white",
+                                     relief="flat", cursor="hand2",
+                                     padx=24, pady=12, height=1)
+        self.update_btn.pack(fill="x", padx=14, pady=(0, 6))
+
+        # 底部行：运行日志折叠 + 关闭
+        bottom_frm = ttk.Frame(self.window)
+        bottom_frm.pack(fill="x", padx=14, pady=(0, 12))
+        self.toggle_btn = ttk.Button(bottom_frm, text="▼ 显示运行日志",
+                                     command=self._toggle_log)
+        self.toggle_btn.pack(side="left")
+        ttk.Button(bottom_frm, text="关闭", command=self._on_close).pack(side="right")
+
+        # 运行日志（默认隐藏，避免干扰主内容）
+        self.log_frm = ttk.LabelFrame(self.window, text="运行日志（调试用）", padding=(8, 6))
+        self.log_box = scrolledtext.ScrolledText(self.log_frm, wrap="word",
+                                                 font=("Consolas", 9))
         self.log_box.pack(fill="both", expand=True)
         self.log_box.configure(state="disabled")
-
-        btn_frm = ttk.Frame(self.window)
-        btn_frm.pack(fill="x", padx=12, pady=(0, 12))
-        self.update_btn = ttk.Button(btn_frm, text="立即更新",
-                                     command=self._do_update, state="disabled")
-        self.update_btn.pack(side="right", padx=(6, 0))
-        ttk.Button(btn_frm, text="关闭", command=self._on_close).pack(side="right")
+        self.log_visible = False
 
         self._fetch_info()
 
@@ -479,7 +498,8 @@ class Updater:
         self.log_box.see(tk.END)
 
     def _set_status(self, text):
-        self.parent.after(0, lambda: self._safe_call(self.status_var.set, text))
+        # 内部状态统一显示在醒目横幅上（原有的 status_var 标签已移除）
+        self._set_banner(text, "info")
 
     def _set_remote_ver(self, text):
         self.parent.after(0, lambda: self._safe_call(self.remote_ver_label.config, {"text": text}))
@@ -494,8 +514,34 @@ class Updater:
 
     def _set_btn(self, text, enabled):
         state = "normal" if enabled else "disabled"
+        if enabled:
+            bg, fg = "#3a8f3a", "white"          # 绿底白字：可点
+        else:
+            bg, fg = "#d9d9d9", "#888888"        # 灰底灰字：不可点
         self.parent.after(0, lambda: self._safe_call(
-            self.update_btn.config, {"text": text, "state": state}))
+            self.update_btn.config, {"text": text, "state": state, "bg": bg, "fg": fg}))
+
+    def _set_banner(self, text, kind="info"):
+        """设置醒目横幅文字与配色：info 黄 / update 橙 / ok 绿 / error 红。"""
+        palette = {
+            "info":   ("#FFF4CC", "#8a6d00"),
+            "update": ("#FFE0B2", "#b35900"),
+            "ok":     ("#E2F0D9", "#2e6b2e"),
+            "error":  ("#F8D7DA", "#a1262b"),
+        }
+        bg, fg = palette.get(kind, palette["info"])
+        self.parent.after(0, lambda: self._safe_call(
+            self.banner.config, {"text": text, "bg": bg, "fg": fg}))
+
+    def _toggle_log(self):
+        self.log_visible = not self.log_visible
+        if self.log_visible:
+            self.log_frm.pack(fill="both", expand=True, padx=14, pady=(0, 8),
+                              before=self.update_btn)
+            self.toggle_btn.config(text="▲ 隐藏运行日志")
+        else:
+            self.log_frm.pack_forget()
+            self.toggle_btn.config(text="▼ 显示运行日志")
 
     def _on_close(self):
         try:
@@ -553,27 +599,27 @@ class Updater:
         self._set_note(notes)
 
         if not self.update_url:
-            self._set_status("未找到更新包下载地址")
+            self._set_banner("未找到更新包地址，无法自动更新", "error")
             self._log("❌ 远程没有配置更新包地址，无法自动更新")
             self._set_btn("无法更新", False)
             return
 
         cmp = self._compare_version(self.current_version, remote_ver)
         if cmp < 0:
-            self._set_status(f"发现新版本 {remote_ver}！")
+            self._set_banner(f"🎉 发现新版本 v{remote_ver}，建议立即更新！", "update")
             self._log(f"✅ 发现新版本：{remote_ver}，点击「立即更新」即可下载替换")
             self._set_btn("立即更新", True)
         elif cmp > 0:
-            self._set_status("当前版本比远程还新")
+            self._set_banner("当前版本比远程还新，无需更新", "ok")
             self._log("💡 当前版本比远程还新，无需更新")
             self._set_btn("无需更新", False)
         else:
-            self._set_status("已经是最新版啦")
+            self._set_banner("✅ 已经是最新版本啦", "ok")
             self._log("💡 已经是最新版本，无需更新")
             self._set_btn("无需更新", False)
 
     def _on_error(self, msg):
-        self._set_status("检查更新失败")
+        self._set_banner("⚠️ 检查更新失败，请稍后重试", "error")
         self._set_remote_ver("—")
         self._log(f"❌ {msg}")
         self._set_btn("无法更新", False)
@@ -583,7 +629,7 @@ class Updater:
         if not self.update_url:
             messagebox.showerror("无法更新", "没有可用的下载链接")
             return
-        self.update_btn.config(state="disabled")
+        self._set_btn("正在更新…", False)
         self._set_status("正在下载更新包…")
         self._log("开始下载更新压缩包，请稍候…")
         threading.Thread(target=self._download, daemon=True).start()
@@ -620,7 +666,7 @@ class Updater:
             self.parent.after(0, self._prepare_replace, zip_path)
         except Exception as e:
             self.parent.after(0, self._on_error, f"下载失败：{e}")
-            self.update_btn.config(state="normal")
+            self._set_btn("立即更新", True)
 
     def _prepare_replace(self, zip_path):
         if not getattr(sys, "frozen", False):
@@ -631,7 +677,7 @@ class Updater:
                 f"更新包已下载到：\n{zip_path}"
             )
             self._set_status("开发模式，未替换")
-            self.update_btn.config(state="normal")
+            self._set_btn("立即更新", True)
             return
 
         # 工具所在目录（exe 同级）
@@ -686,7 +732,7 @@ class Updater:
         except Exception as e:
             self._log(f"❌ 启动替换脚本失败：{e}")
             self._set_status("启动替换脚本失败")
-            self.update_btn.config(state="normal")
+            self._set_btn("立即更新", True)
 
     def _exit_app(self):
         try:

@@ -13,5 +13,16 @@ build/
 # 本地自签名证书指纹（仅本机工作用，不入库）
 cert_thumbprint.txt
 
+# 构建过程日志（本机产物，不入库）
+build_log.txt
+cert_log.txt
+iscc_log.txt
+iscc_out.txt
+iscc_err.txt
+updatezip_log.txt
+
+# 打包过程产生的临时 zip
+public.zip
+
 # Wrangler 本地产物
 .wrangler/
