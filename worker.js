@@ -100,7 +100,7 @@ const LANDING = `<!DOCTYPE html>
 </html>`;
 
 export default {
-  async fetch(request) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const p = url.pathname.toLowerCase();
 
@@ -180,7 +180,126 @@ export default {
       return new Response(upstreamResp.body, { status: 200, headers });
     }
 
+    // 2.6) POST /api/report → 接收匿名统计并写入 KV（仅收集合法匿名数据）
+    if (p === "/api/report" && request.method === "POST") {
+      try {
+        const raw = await request.text();
+        let d;
+        try { d = JSON.parse(raw); } catch (e) { return new Response("bad json", { status: 400 }); }
+        const uuid = String(d.uuid || "").slice(0, 64);
+        if (!uuid) return new Response("bad uuid", { status: 400 });
+        const event = String(d.event || "");
+        if (!["push", "update", "session_end"].includes(event)) return new Response("bad event", { status: 400 });
+        const version = String(d.version || "").slice(0, 32);
+        const push_count = Math.max(0, parseInt(d.push_count) || 0);
+        const update_count = Math.max(0, parseInt(d.update_count) || 0);
+        const session_ms = Math.max(0, parseInt(d.session_ms) || 0);
+        const ts = parseInt(d.ts) || Date.now();
+
+        // 每个匿名设备一条记录
+        const ukey = "u:" + uuid;
+        let u = {};
+        try { u = await env.GP_STATS.get(ukey, { type: "json" }) || {}; } catch (e) {}
+        u.push_count = Math.max(u.push_count || 0, push_count);
+        u.update_count = Math.max(u.update_count || 0, update_count);
+        if (event === "session_end") u.sessions = (u.sessions || 0) + 1;
+        u.version = version || u.version || "未知";
+        u.last_seen = ts;
+        if (!u.first_seen) u.first_seen = ts;
+        await env.GP_STATS.put(ukey, JSON.stringify(u));
+
+        // 全局汇总（累加增量，低频统计竞态可忽略）
+        let g = {};
+        try { g = await env.GP_STATS.get("g", { type: "json" }) || {}; } catch (e) {}
+        g.total_push = (g.total_push || 0) + (event === "push" ? 1 : 0);
+        g.total_update = (g.total_update || 0) + (event === "update" ? 1 : 0);
+        g.total_sessions = (g.total_sessions || 0) + (event === "session_end" ? 1 : 0);
+        g.last_report = ts;
+        await env.GP_STATS.put("g", JSON.stringify(g));
+
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, error: String(e) }), {
+          status: 500, headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // 2.7) GET /admin → 密码保护的后台统计面板
+    if (p === "/admin") {
+      const pwd = url.searchParams.get("pwd") || "";
+      if (pwd !== "adminneko") {
+        return new Response(adminLoginHtml(), {
+          headers: { "Content-Type": "text/html; charset=utf-8" }, status: 401,
+        });
+      }
+      let g = {};
+      try { g = await env.GP_STATS.get("g", { type: "json" }) || {}; } catch (e) {}
+      let users = [];
+      try {
+        const list = await env.GP_STATS.list({ prefix: "u:" });
+        for (const k of list.keys) {
+          try {
+            const u = await env.GP_STATS.get(k.name, { type: "json" });
+            if (u) users.push(u);
+          } catch (e) {}
+        }
+      } catch (e) {}
+      const now = Date.now();
+      const day = 86400000;
+      const activeToday = users.filter((u) => (u.last_seen || 0) > now - day).length;
+      const active7 = users.filter((u) => (u.last_seen || 0) > now - 7 * day).length;
+      const verMap = {};
+      for (const u of users) { const v = u.version || "未知"; verMap[v] = (verMap[v] || 0) + 1; }
+      const verDist = Object.entries(verMap).map(([v, c]) => `${v}: ${c}`).join("，") || "暂无";
+      return new Response(adminPanelHtml(g, users.length, activeToday, active7, verDist), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
     // 3) 其他 → 404
     return new Response("Not Found", { status: 404 });
   },
 };
+
+// ---- 后台面板辅助函数（密码：adminneko）----
+function adminLoginHtml() {
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GitPush 后台</title>
+  <style>body{font-family:"Microsoft YaHei",sans-serif;background:#f4f6f9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+  .box{background:#fff;padding:32px 40px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.08);text-align:center}
+  input{padding:10px 14px;font-size:15px;border:1px solid #ccc;border-radius:8px;width:240px}
+  button{margin-top:14px;padding:10px 26px;font-size:15px;border:none;border-radius:8px;background:#FF6B3D;color:#fff;cursor:pointer}
+  h2{margin:0 0 18px;color:#333}</style></head>
+  <body><div class="box"><h2>GitPush 数据后台</h2>
+  <form method="get"><input type="password" name="pwd" placeholder="请输入后台密码" autofocus>
+  <br><button type="submit">进入</button></form></div></body></html>`;
+}
+function adminPanelHtml(g, totalUsers, activeToday, active7, verDist) {
+  const num = (n) => (n || 0).toLocaleString("zh-CN");
+  const last = g.last_report ? new Date(g.last_report).toLocaleString("zh-CN") : "暂无";
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GitPush 数据后台</title>
+  <style>body{font-family:"Microsoft YaHei",sans-serif;background:#f4f6f9;margin:0;padding:32px;color:#222}
+  h1{font-size:22px;margin:0 0 20px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
+  .card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 6px 20px rgba(0,0,0,.06)}
+  .card .k{font-size:13px;color:#888}.card .v{font-size:28px;font-weight:700;margin-top:6px;color:#FF6B3D}
+  .meta{margin-top:24px;font-size:13px;color:#666}
+  a{color:#1a73e8;text-decoration:none}</style></head>
+  <body><h1>GitPush 匿名数据统计后台</h1>
+  <div class="grid">
+    <div class="card"><div class="k">累计推送次数</div><div class="v">${num(g.total_push)}</div></div>
+    <div class="card"><div class="k">累计更新次数</div><div class="v">${num(g.total_update)}</div></div>
+    <div class="card"><div class="k">累计会话数</div><div class="v">${num(g.total_sessions)}</div></div>
+    <div class="card"><div class="k">活跃设备总数</div><div class="v">${num(totalUsers)}</div></div>
+    <div class="card"><div class="k">今日活跃</div><div class="v">${num(activeToday)}</div></div>
+    <div class="card"><div class="k">近7日活跃</div><div class="v">${num(active7)}</div></div>
+  </div>
+  <div class="meta">版本分布：${verDist}<br>最近一次上报：${last}<br>
+  （数据均为匿名聚合，不含任何用户隐私。）<br>
+  <a href="/admin">刷新</a></div></body></html>`;
+}

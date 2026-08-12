@@ -10,8 +10,8 @@
 
 [Setup]
 AppName=Git Push
-AppVersion=1.2.0
-AppVerName=Git Push 1.2.0
+AppVersion=1.2.7
+AppVerName=Git Push 1.2.7
 AppPublisher=NekoAiDev
 DefaultDirName={autopf}\Git Push
 DefaultGroupName=Git Push
@@ -25,6 +25,9 @@ PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 DisableProgramGroupPage=no
+; 安装时展示用户协议与隐私政策（需勾选同意方可继续安装）
+LicenseFile=D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\用户服务协议.txt
+InfoBeforeFile=D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\隐私政策.txt
 
 [Languages]
 Name: "ChineseSimplified"; MessagesFile: "ChineseSimplified.isl"
@@ -43,6 +46,8 @@ Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\README.md"; Des
 Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\rebuild_update.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\refresh_icon_cache.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\version.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\用户服务协议.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\隐私政策.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\build_installer.ps1"; DestDir: "{app}"; Flags: ignoreversion
 ; dist 目录（运行时必需，递归打包）
 Source: "D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\dist\*"; DestDir: "{app}\dist"; Flags: ignoreversion recursesubdirs createallsubdirs

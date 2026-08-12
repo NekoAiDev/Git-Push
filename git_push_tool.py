@@ -29,9 +29,165 @@ import tkinter as tk
 import urllib.request
 from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
 import webbrowser
+import uuid as _uuid
+
+# 统计上报接口（匿名、仅收集合法使用数据，绝不收集任何隐私）
+STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.2.6"
+APP_VERSION = "1.2.7"
+
+# ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
+DOC_EULA = r"""
+Git Push 工具 用户服务协议
+
+版本生效日期：2026 年 8 月 12 日
+
+欢迎使用 Git Push 工具（以下简称"本软件"或"本工具"）。本软件由 NekoAiDev 团队（以下简称"运营方"）开发、维护并提供分发服务。在您下载、安装、复制、运行或继续使用本软件之前，请务必仔细阅读并充分理解本协议的全部内容，特别是以加粗方式标注的免责、责任限制、协议变更与争议解决等条款。
+
+如果您尚未满十八周岁，请在法定监护人的陪同与同意下阅读本协议，并在取得监护人明确同意后方可使用本软件。
+
+一旦您下载、安装、运行或继续使用本软件，即视为您已阅读、理解并完全同意接受本协议各项条款的约束。若您不同意本协议的任何内容，请立即停止下载、安装或使用本软件，并删除已安装的全部程序文件。
+
+一、软件概述与服务说明
+1.1 本软件是一款运行于 Microsoft Windows 操作系统的图形化 Git 辅助工具，旨在帮助不熟悉命令行操作的用户，通过简单的图形界面选择本地文件或文件夹、填写远程仓库地址，并一键完成 git add、git commit、git remote 设置与 git push 等操作。
+1.2 本软件本身不包含任何独立版本控制系统，其功能完全依赖于您计算机上已安装的 Git 命令行程序。若您的计算机尚未安装 Git，本软件将无法完成推送操作，并会在界面中给出相应提示。
+1.3 本软件提供可选的自动更新功能，可在您授权后从运营方指定的官方分发服务器（域名：install.nekoaidev.top）下载并安装新版本程序。
+1.4 本软件为免费软件，运营方不向任何用户收取任何使用费用，亦不承诺提供任何形式的付费保障或商业支持。
+
+二、用户数据与匿名统计
+2.1 为持续改进产品体验、了解功能使用情况、发现并修复潜在问题，本软件在获得您明确同意的前提下，会向运营方服务器上报极少量的匿名使用统计数据。
+2.2 我们收集的匿名统计数据仅限于以下字段，绝不包含任何可识别您个人身份的信息，也绝不包含您的文件内容、仓库地址、文件路径、计算机硬件信息或任何系统隐私数据：
+    （一）一个由软件在您设备上随机生成的匿名设备标识（UUID）。该标识仅用于区分不同的安装实例，不与您的真实身份、账号或设备序列号关联；
+    （二）本软件当前的版本号；
+    （三）您使用本工具成功完成"推送"操作的累计次数；
+    （四）您使用本工具成功完成"更新"操作的累计次数；
+    （五）本次使用会话的启动时间与持续时长（以毫秒计）；
+    （六）本次上报所对应的事件类型（包括：推送成功、更新成功、会话结束）。
+2.3 上述数据在您首次启动软件时，会弹出提示明确征询您的同意。只有在您选择"同意"后，软件才会进行上述上报；若您选择"拒绝"，或在本地删除对应的匿名标识文件，软件将完全停止此类上报，且不影响任何其它功能的正常使用。
+2.4 关于上述数据的收集、使用、存储与保护等更多细节，请参阅与本协议一并提供的《Git Push 工具 隐私政策》。
+
+三、用户的权利与义务
+3.1 您有权在遵守本协议及国家相关法律法规的前提下，免费使用本软件提供的全部功能。
+3.2 您理解并同意：您使用本软件进行的任何 Git 推送操作，均代表您本人的真实意愿；由此产生的代码提交记录、仓库内容、授权行为以及对外公开信息，一切后果由您自行承担。
+3.3 您应妥善保管自己的远程仓库凭证（包括但不限于用户名、密码、个人访问令牌 Token 等）。本软件仅在您本地计算机上调用 Git 命令行程序完成操作，不会将您的凭证上传至任何第三方服务器；但请您注意，通过不安全的网络或向公开仓库推送敏感信息可能导致信息泄露，由此产生的风险由您自行承担。
+3.4 您不得利用本软件从事任何违反国家法律法规、侵犯他人合法权益、破坏网络安全、干扰其他网络服务正常运行或损害社会公共利益的行为。
+3.5 您不得对本软件进行反向工程、反向汇编、反向编译，或试图提取其源代码（法律另有明确规定或为权利义务保护所必须的除外）。
+
+四、知识产权
+4.1 本软件及其相关的一切著作权、商标权、专利权、商业秘密等知识产权，均归运营方或相关权利人所有，并受相关法律法规保护。
+4.2 本软件采用自签名代码签名证书，其作用仅限于在您计算机上标识发布者身份、减少 Windows 系统弹出的"未知发布者"安全提示，并不代表本软件已通过任何第三方权威机构的认证或担保。
+4.3 未经运营方书面许可，您不得将本软件用于任何商业性再分发、捆绑销售或营利性服务；您可出于个人学习、使用目的，在不修改软件本体及署名的前提下自由复制与传播。
+
+五、免责声明
+5.1 本软件按"现状"提供。运营方已尽合理努力保障其功能正常，但不对本软件的适用性、可靠性、无中断性、无错误或满足特定用途作出任何明示或默示担保。
+5.2 因下列原因之一造成您任何损失的，运营方不承担责任：
+    （一）您计算机环境异常（如未安装 Git、系统组件缺失、权限不足、防病毒软件拦截）导致功能无法使用；
+    （二）您的网络、代理、防火墙或远程仓库服务（如 GitHub、Gitee 等）本身的故障、限流、变更或停止服务；
+    （三）您填写的仓库地址、凭证错误，或远程仓库的访问权限、存储容量、配额限制；
+    （四）不可抗力（包括但不限于自然灾害、网络基础设施故障、政策调整、电力中断）或第三方服务中断。
+5.3 您使用本软件所作的任何操作（包括但不限于误推送、覆盖提交、删除分支、强制推送等），风险由您自行承担，运营方不提供任何数据恢复服务。
+
+六、协议的变更
+6.1 运营方保留在必要时修改本协议条款的权利。修改后的协议将在软件更新或官方页面中予以公示。
+6.2 若您在协议变更后继续使用本软件，即视为您接受变更后的协议；若您不同意变更后的协议，应停止使用并删除本软件。
+
+七、法律适用与争议解决
+7.1 本协议的订立、执行、解释及争议的解决，均适用中华人民共和国大陆地区相关法律法规。
+7.2 因本协议引起的或与本协议有关的任何争议，双方应友好协商解决；协商不成的，任何一方均可向运营方所在地有管辖权的人民法院提起诉讼。
+
+八、联系我们
+8.1 如您对本协议、隐私政策或本软件本身有任何疑问、意见或投诉，可通过以下方式联系运营方：
+    （一）在软件"帮助"菜单中点击"问题反馈"，前往 GitHub Issues 页面提交您的问题；
+    （二）发送电子邮件至运营方指定的联系邮箱（以官方页面公示为准）。
+8.2 运营方将在合理期限内对您的反馈予以回应，但不保证对所有反馈均提供个性化解决方案。
+
+九、其他
+9.1 本协议构成您与运营方之间关于本软件使用的完整协议，并取代此前任何口头或书面的沟通与约定。
+9.2 本协议任一条款被认定为无效或不可执行的，不影响其余条款的效力。
+9.3 运营方未行使或延迟行使本协议项下的任何权利，不构成对该权利的放弃。
+
+感谢您使用 Git Push 工具。愿本工具能让您的代码推送更简单、更顺手。
+"""
+
+DOC_PRIVACY = r"""
+Git Push 工具 隐私政策
+
+版本生效日期：2026 年 8 月 12 日
+
+本《隐私政策》（以下简称"本政策"）向您说明：当您使用 Git Push 工具（以下简称"本软件"或"本工具"，由 NekoAiDev 团队运营）时，我们如何收集、使用、存储与保护您的个人信息及相关数据。请您在使用本软件前仔细阅读本政策。
+
+本软件的设计理念是"最小必要、匿名优先"。我们坚信，一款帮助您推送代码的工具，没有必要、也没有权利窥探您的文件与隐私。因此，本政策的核心结论是：本软件默认不收集任何可识别您个人身份的信息，仅在您明确同意后收集极少量的匿名使用统计数据，且绝不涉及您的代码、仓库与计算机隐私。
+
+一、我们收集的信息
+在您明确同意匿名统计后，本软件仅向运营方服务器上报以下匿名字段：
+1.1 匿名设备标识（UUID）：由软件在您设备上随机生成的字符串，用于区分不同的安装实例。它不与您的姓名、账号、邮箱、设备序列号或任何真实身份关联。
+1.2 软件版本号：用于了解用户群体所使用的版本分布，从而决定需要维护哪些旧版本。
+1.3 推送成功次数：您使用本工具成功完成"推送"操作的累计次数。
+1.4 更新成功次数：您使用本工具成功完成"更新"操作的累计次数。
+1.5 会话启动时间与持续时长：本次使用会话的开始时刻，以及自开始到本次上报时的运行时长（毫秒）。
+1.6 事件类型：本次上报对应的事件，包括"推送成功""更新成功""会话结束"。
+
+二、我们如何收集这些信息
+2.1 匿名设备标识在您首次运行本软件时于本地随机生成，并保存在您计算机上的本地配置文件中，不会在生成过程中上传任何信息。
+2.2 使用统计数据由本软件在您完成相应操作（推送、更新）或退出会话时，通过 HTTPS 协议自动发送至运营方指定的统计接口（位于 install.nekoaidev.top 域名下）。
+2.3 发送过程在后台线程中进行，不会阻塞您对本软件的正常使用；若网络不可用或发送失败，软件将静默忽略，不会影响您继续使用其它功能。
+
+三、我们如何使用这些信息
+3.1 我们仅将匿名统计数据用于以下合法目的：
+    （一）了解功能使用情况，判断哪些功能受欢迎、哪些需要改进；
+    （二）统计整体推送与更新频次，评估软件稳定性与活跃度；
+    （三）发现异常使用模式或潜在故障，以便及时修复。
+3.2 我们不会将匿名统计数据用于广告投放、用户画像、商业营销，亦不会将其出售、出租或交换给任何第三方。
+
+四、我们明确不会收集的信息
+为保护您的隐私，本软件在设计上明确排除以下信息的收集与上传：
+4.1 您的文件内容：本软件不会读取、上传、扫描您选择推送之外的任何文件，也不会上传您实际推送的代码、文档或资源。
+4.2 您的仓库地址与路径：本软件不会将您填写的远程仓库地址、本地文件夹路径或文件名上报给服务器。
+4.3 您的个人身份信息：本软件不要求注册账号，因此不收集您的姓名、手机号、邮箱、社交媒体账号等任何可识别个人身份的信息。
+4.4 您的凭证：本软件仅在本地调用 Git 完成操作，绝不收集或上传您的密码、Token、SSH 密钥等凭证。
+4.5 您的计算机隐私信息：本软件不会收集您的硬件序列号、MAC 地址、操作系统详细配置、已安装软件列表、浏览记录、地理位置等与代码推送无关的计算机信息。
+4.6 您在使用过程中的具体输入内容（如填写的仓库地址、提交说明等），均仅在本地用于完成 Git 操作，不会被记录或上报。
+
+五、数据存储与安全
+5.1 匿名统计数据存储在运营方托管的 Cloudflare KV 存储服务中，与具体的个人身份无任何关联。
+5.2 我们采取合理的访问控制措施保护存储的数据，仅限于授权维护人员为上述目的进行必要查阅。
+5.3 您的匿名设备标识以本地文件形式保存在您的计算机上，您可以随时通过删除该本地文件（或在软件提示时选择"拒绝"）来停止一切上报行为。
+5.4 由于互联网传输的固有特性，任何数据传输都无法保证绝对安全。我们将尽合理努力保护您的数据，但不对不可抗力或第三方攻击导致的泄露承担责任。
+
+六、数据的共享与披露
+6.1 我们不会与任何第三方共享、出售或交换本软件收集的匿名统计数据。
+6.2 仅在下列情形下，我们可能依法披露相关信息：
+    （一）根据适用法律、法规、司法或行政程序的要求；
+    （二）为保护运营方、用户或公众的合法权益、安全与财产所必须。
+6.3 除上述情形外，您的匿名统计数据不会被披露给任何外部组织或个人。
+
+七、您的权利
+7.1 您有权决定是否同意匿名统计。首次启动时软件会明确询问，您可随时选择拒绝；选择拒绝后不会进行任何上报。
+7.2 您有权撤回已作出的同意：只需删除本软件所在目录下的本地统计配置文件（通常名为 stats.json），即可彻底停止上报，且不影响其它功能。
+7.3 您有权了解我们收集的数据范围——本政策第四条已详尽列明我们"不会"收集的内容，第五条列明了我们"会"收集的内容。
+7.4 由于本软件不收集可识别个人身份的信息，因此不存在"删除个人账号数据"的场景；您所拥有的匿名标识本质上只是一串随机字符，删除本地文件即等同于彻底脱离统计。
+
+八、服务器访问日志
+8.1 为支撑统计接口的安全运行，服务器的基础设施（Cloudflare）可能会在短时间内记录每次请求的来源 IP 地址、时间、响应状态等基础访问日志，用于抵御恶意请求与保障服务稳定。
+8.2 此类基础访问日志不与本软件上报的匿名统计数据做关联分析，运营方亦不会据此识别您的身份。相关日志的留存周期由基础设施提供方按照其通用安全策略管理。
+
+九、未成年人保护
+9.1 我们高度重视未成年人个人信息保护。本软件不面向未满十八周岁的未成年人定向设计，亦不主动收集未成年人个人信息。
+9.2 若您是未成年人，请在法定监护人同意并由其陪同下使用本软件。
+
+十、本政策的变更
+10.1 我们可能适时更新本政策。更新后的政策将在软件更新或官方页面中公示，并在文件顶部标注新的生效日期。
+10.2 若您在本政策变更后继续使用本软件，即视为您接受变更后的政策。
+
+十一、联系我们
+11.1 如您对本政策有任何疑问、意见或投诉，可通过以下方式联系运营方：
+    （一）在软件"帮助"菜单中点击"问题反馈"，前往 GitHub Issues 页面提交；
+    （二）发送电子邮件至运营方指定的联系邮箱（以官方页面公示为准）。
+11.2 我们将在合理期限内对您的关切予以回应。
+
+本政策所述内容，均以"保护用户隐私、最小必要收集"为基本原则。感谢您对 Git Push 工具的信任。
+"""
 
 GITHUB_OWNER = "NekoAiDev"
 GITHUB_REPO = "Git-Push"
@@ -68,6 +224,10 @@ class GitPushTool:
         self._build_styles()
         self._build_ui()
         self._build_menu()
+
+        # 初始化匿名统计（首次启动会弹窗询问是否同意）
+        self._init_stats()
+        self.root.after(400, self._maybe_ask_consent)
 
         # 启动时检查 git
         if not is_git_available():
@@ -176,6 +336,10 @@ class GitPushTool:
 
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="使用说明", command=self._show_help)
+        help_menu.add_separator()
+        help_menu.add_command(label="用户服务协议", command=lambda: self._show_doc("用户服务协议", DOC_EULA))
+        help_menu.add_command(label="隐私政策", command=lambda: self._show_doc("隐私政策", DOC_PRIVACY))
+        help_menu.add_separator()
         help_menu.add_command(label="问题反馈", command=self._open_issues)
         help_menu.add_command(label="关于", command=self._show_about)
         menubar.add_cascade(label="帮助", menu=help_menu)
@@ -361,6 +525,7 @@ class GitPushTool:
             if rc == 0:
                 self.log("🎉 推送成功！")
                 self.set_status("✅ 推送成功")
+                self._report_event("push")
             else:
                 self.log("⚠️ 推送失败，请查看上方日志找原因（多半是凭证或分支冲突）")
                 self.set_status("❌ 推送失败")
@@ -401,6 +566,111 @@ class GitPushTool:
             messagebox.showerror("打开失败", f"无法打开浏览器：{e}\n可手动访问：{issues_url}")
 
     # ---------------------------------------------------------------- 更新
+    # ---------------------------------------------------------------- 统计/合规
+    def _stats_path(self):
+        try:
+            base = os.path.dirname(os.path.abspath(sys.executable))
+        except Exception:
+            base = os.getcwd()
+        return os.path.join(base, "stats.json")
+
+    def _init_stats(self):
+        self.started_at = int(time.time())
+        self.stats_path = self._stats_path()
+        self.stats = {"uuid": "", "push_count": 0, "update_count": 0,
+                      "consent": None, "first_run": 0, "last_run": 0}
+        try:
+            if os.path.exists(self.stats_path):
+                with open(self.stats_path, "r", encoding="utf-8") as f:
+                    self.stats.update(json.load(f))
+        except Exception:
+            pass
+        if not self.stats.get("uuid"):
+            try:
+                self.stats["uuid"] = str(_uuid.uuid4())
+            except Exception:
+                self.stats["uuid"] = "anon-" + str(int(time.time()))
+
+    def _save_stats(self):
+        try:
+            with open(self.stats_path, "w", encoding="utf-8") as f:
+                json.dump(self.stats, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _maybe_ask_consent(self):
+        if self.stats.get("consent") is not None:
+            return
+        try:
+            ans = messagebox.askyesno(
+                "匿名使用统计",
+                "为了持续改进 Git Push 工具，我们想收集极少量的匿名使用数据，\n"
+                "例如：推送成功次数、更新次数、使用时长（仅统计，不含任何文件/仓库/隐私）。\n\n"
+                "是否同意在您使用时发送这些匿名统计数据？\n"
+                "（随时可在程序目录删除 stats.json 停止，拒绝不影响任何功能）"
+            )
+            self.stats["consent"] = bool(ans)
+            self._save_stats()
+        except Exception:
+            pass
+
+    def _report_event(self, event, join=False):
+        # 仅在用户同意后才上报；仅发送匿名合法数据，绝不发送隐私
+        if not self.stats.get("consent"):
+            return
+        try:
+            if event == "push":
+                self.stats["push_count"] = int(self.stats.get("push_count", 0)) + 1
+            elif event == "update":
+                self.stats["update_count"] = int(self.stats.get("update_count", 0)) + 1
+            self.stats["last_run"] = int(time.time())
+            self._save_stats()
+
+            payload = {
+                "uuid": self.stats.get("uuid", ""),
+                "version": APP_VERSION,
+                "event": event,
+                "push_count": int(self.stats.get("push_count", 0)),
+                "update_count": int(self.stats.get("update_count", 0)),
+                "started_at": self.started_at,
+                "session_ms": int((time.time() - self.started_at) * 1000),
+                "ts": int(time.time()),
+            }
+            data = json.dumps(payload).encode("utf-8")
+
+            def _post():
+                try:
+                    req = urllib.request.Request(
+                        STATS_URL,
+                        data=data,
+                        headers={"Content-Type": "application/json",
+                                 "User-Agent": "GitPush/" + APP_VERSION},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        resp.read()
+                except Exception:
+                    pass
+
+            t = threading.Thread(target=_post, daemon=True)
+            t.start()
+            if join:
+                t.join(3)
+        except Exception:
+            pass
+
+    def _show_doc(self, title, text):
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.geometry("720x560")
+        win.transient(self.root)
+        txt = scrolledtext.ScrolledText(win, wrap="word",
+                                        font=("Microsoft YaHei", 11), padx=10, pady=10)
+        txt.pack(fill="both", expand=True)
+        txt.insert("1.0", text)
+        txt.configure(state="disabled")
+        ttk.Button(win, text="关闭", command=win.destroy).pack(pady=8)
+
     def _open_updater(self):
         Updater(self.root, APP_VERSION).show()
 
@@ -765,6 +1035,11 @@ class Updater:
 
         self._log(f"已生成替换脚本：{bat_path}")
         self._log("正在启动替换脚本并退出旧程序…")
+        # 记录一次「更新成功」事件（仅匿名统计，需用户已同意）
+        try:
+            self.parent._report_event("update", join=True)
+        except Exception:
+            pass
         try:
             subprocess.Popen([bat_path], shell=False,
                              creationflags=subprocess.CREATE_NO_WINDOW)
@@ -808,7 +1083,9 @@ def main():
             default_font.configure(family="Segoe UI", size=10)
         except Exception:
             pass
-        GitPushTool(root)
+        tool = GitPushTool(root)
+        import atexit
+        atexit.register(lambda: tool._report_event("session_end", join=True))
         root.mainloop()
     except Exception:
         # 兜底：任何启动期异常都弹窗显示，避免一闪而过看不到原因
