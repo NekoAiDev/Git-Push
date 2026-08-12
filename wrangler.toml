@@ -23,4 +23,4 @@ account_id = "291be096c0dd976905b93dbf9c327f62"
 # 创建命令：wrangler kv namespace create GP_STATS
 [[kv_namespaces]]
 binding = "GP_STATS"
-id = "REPLACE_WITH_GP_STATS_ID"
+id = "11c2160d633746eebaabc31039b05d6c"
