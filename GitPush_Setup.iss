@@ -10,12 +10,14 @@
 
 [Setup]
 AppName=Git Push
-AppVersion=1.2.10
-AppVerName=Git Push 1.2.10
+AppVersion=1.3.0
+AppVerName=Git Push 1.3.0
 AppPublisher=NekoAiDev
 DefaultDirName=C:\Program Files\Git Push
 ; 强制显示“选择目标位置”页面，允许用户自定义安装到 D 盘或其他任意目录（默认仍是 C:\Program Files）
 DisableDirPage=no
+; 不使用上一次安装的目录记忆，确保默认路径始终为 C:\Program Files\Git Push
+UsePreviousAppDir=no
 DefaultGroupName=Git Push
 ; ⚠️ 下面 OutputDir 只是“本机编译时把生成的安装包文件(GitPush_Setup.exe)写到哪”，与用户安装位置无关！
 ;    用户电脑上的【默认安装目录】由上面的 DefaultDirName 决定（C:\Program Files\Git Push），可在安装向导里改到任意盘。
