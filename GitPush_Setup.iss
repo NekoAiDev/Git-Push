@@ -17,6 +17,8 @@ DefaultDirName=C:\Program Files\Git Push
 ; 强制显示“选择目标位置”页面，允许用户自定义安装到 D 盘或其他任意目录（默认仍是 C:\Program Files）
 DisableDirPage=no
 DefaultGroupName=Git Push
+; ⚠️ 下面 OutputDir 只是“本机编译时把生成的安装包文件(GitPush_Setup.exe)写到哪”，与用户安装位置无关！
+;    用户电脑上的【默认安装目录】由上面的 DefaultDirName 决定（C:\Program Files\Git Push），可在安装向导里改到任意盘。
 OutputDir=D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24
 OutputBaseFilename=GitPush_Setup
 SetupIconFile=D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24\appicon.ico
