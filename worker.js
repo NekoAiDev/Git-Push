@@ -230,7 +230,7 @@ export default {
     // 2.7) GET /admin → 密码保护的后台统计面板
     if (p === "/admin") {
       const pwd = url.searchParams.get("pwd") || "";
-      if (pwd !== "adminneko") {
+      if (pwd !== "adminnekoa5B8xtSc") {
         return new Response(adminLoginHtml(), {
           headers: { "Content-Type": "text/html; charset=utf-8" }, status: 401,
         });
@@ -264,7 +264,7 @@ export default {
   },
 };
 
-// ---- 后台面板辅助函数（密码：adminneko）----
+// ---- 后台面板辅助函数（密码：adminnekoa5B8xtSc）----
 function adminLoginHtml() {
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">

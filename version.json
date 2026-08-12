@@ -1,5 +1,5 @@
 {
-  "version": "1.2.7",
-  "notes": "v1.2.7\n- 新增后台匿名数据统计（密码保护后台面板）：仅统计推送次数、更新次数、使用时间等合法匿名数据，绝不收集文件路径/仓库/内容/电脑隐私\n- 首次启动弹窗询问是否同意匿名统计，拒绝则完全不联网上报，且不影响任何功能\n- 安装包内置《用户服务协议》与《隐私政策》，安装时需阅读并同意方可继续\n- 帮助菜单新增「用户服务协议」「隐私政策」可直接查看全文\n- 版本升级到 1.2.7，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
+  "version": "1.2.8",
+  "notes": "v1.2.8\n- 后台密码增强为 adminneko + 随机后缀\n- 精简首次启动统计询问弹窗文案\n- 版本升级到 1.2.8，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
   "update_url": "https://install.nekoaidev.top/update.zip"
 }

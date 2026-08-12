@@ -35,7 +35,7 @@ import uuid as _uuid
 STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.2.7"
+APP_VERSION = "1.2.8"
 
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
@@ -606,8 +606,7 @@ class GitPushTool:
                 "匿名使用统计",
                 "为了持续改进 Git Push 工具，我们想收集极少量的匿名使用数据，\n"
                 "例如：推送成功次数、更新次数、使用时长（仅统计，不含任何文件/仓库/隐私）。\n\n"
-                "是否同意在您使用时发送这些匿名统计数据？\n"
-                "（随时可在程序目录删除 stats.json 停止，拒绝不影响任何功能）"
+                "是否同意在您使用时发送这些匿名统计数据？"
             )
             self.stats["consent"] = bool(ans)
             self._save_stats()

@@ -10,8 +10,8 @@
 
 [Setup]
 AppName=Git Push
-AppVersion=1.2.7
-AppVerName=Git Push 1.2.7
+AppVersion=1.2.8
+AppVerName=Git Push 1.2.8
 AppPublisher=NekoAiDev
 DefaultDirName={autopf}\Git Push
 DefaultGroupName=Git Push
