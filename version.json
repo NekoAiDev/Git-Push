@@ -1,5 +1,5 @@
 {
-  "version": "1.2.8",
-  "notes": "v1.2.8\n- 后台密码增强为 adminneko + 随机后缀\n- 精简首次启动统计询问弹窗文案\n- 版本升级到 1.2.8，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
+  "version": "1.2.9",
+  "notes": "v1.2.9\n- 后台密码改为完全随机强密码（无明文前缀），并加入登录失败次数限制（连续5次错误锁定15分钟，防爆破）\n- 安装包默认安装路径明确为 C:\\Program Files\\Git Push\n- 版本升级到 1.2.9，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
   "update_url": "https://install.nekoaidev.top/update.zip"
 }

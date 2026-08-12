@@ -10,10 +10,10 @@
 
 [Setup]
 AppName=Git Push
-AppVersion=1.2.8
-AppVerName=Git Push 1.2.8
+AppVersion=1.2.9
+AppVerName=Git Push 1.2.9
 AppPublisher=NekoAiDev
-DefaultDirName={autopf}\Git Push
+DefaultDirName=C:\Program Files\Git Push
 DefaultGroupName=Git Push
 OutputDir=D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24
 OutputBaseFilename=GitPush_Setup

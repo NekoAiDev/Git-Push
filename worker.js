@@ -227,14 +227,32 @@ export default {
       }
     }
 
-    // 2.7) GET /admin → 密码保护的后台统计面板
+    // 2.7) GET /admin → 密码保护的后台统计面板（带失败次数限制，防爆破）
     if (p === "/admin") {
       const pwd = url.searchParams.get("pwd") || "";
-      if (pwd !== "adminnekoa5B8xtSc") {
-        return new Response(adminLoginHtml(), {
+
+      // 失败次数限制：连续 5 次错误后锁定 15 分钟
+      let fail = {};
+      try { fail = JSON.parse(await env.GP_STATS.get("admin_fail") || "{}"); } catch (e) {}
+      if ((fail.count || 0) >= 5 && (Date.now() - (fail.ts || 0)) < 15 * 60 * 1000) {
+        return new Response("尝试次数过多，请 15 分钟后再试", {
+          headers: { "Content-Type": "text/plain; charset=utf-8" }, status: 429,
+        });
+      }
+
+      if (pwd !== "mw41KUHH65WCIEcqsPoy") {
+        fail.count = (fail.count || 0) + 1;
+        fail.ts = Date.now();
+        try { await env.GP_STATS.put("admin_fail", JSON.stringify(fail)); } catch (e) {}
+        const left = Math.max(0, 5 - fail.count);
+        return new Response(adminLoginHtml(left > 0 ? `密码错误，还可尝试 ${left} 次` : "密码错误"), {
           headers: { "Content-Type": "text/html; charset=utf-8" }, status: 401,
         });
       }
+
+      // 验证通过，重置失败计数
+      try { await env.GP_STATS.put("admin_fail", JSON.stringify({ count: 0, ts: 0 })); } catch (e) {}
+
       let g = {};
       try { g = await env.GP_STATS.get("g", { type: "json" }) || {}; } catch (e) {}
       let users = [];
@@ -264,8 +282,9 @@ export default {
   },
 };
 
-// ---- 后台面板辅助函数（密码：adminnekoa5B8xtSc）----
-function adminLoginHtml() {
+// ---- 后台面板辅助函数 ----
+function adminLoginHtml(msg) {
+  const tip = msg ? `<p style="color:#c0392b;margin:0 0 14px;font-size:14px">${msg}</p>` : "";
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>GitPush 后台</title>
@@ -275,6 +294,7 @@ function adminLoginHtml() {
   button{margin-top:14px;padding:10px 26px;font-size:15px;border:none;border-radius:8px;background:#FF6B3D;color:#fff;cursor:pointer}
   h2{margin:0 0 18px;color:#333}</style></head>
   <body><div class="box"><h2>GitPush 数据后台</h2>
+  ${tip}
   <form method="get"><input type="password" name="pwd" placeholder="请输入后台密码" autofocus>
   <br><button type="submit">进入</button></form></div></body></html>`;
 }
