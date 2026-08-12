@@ -1,5 +1,5 @@
 {
-  "version": "1.2.9",
-  "notes": "v1.2.9\n- 后台密码改为完全随机强密码（无明文前缀），并加入登录失败次数限制（连续5次错误锁定15分钟，防爆破）\n- 安装包默认安装路径明确为 C:\\Program Files\\Git Push\n- 版本升级到 1.2.9，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
+  "version": "1.2.10",
+  "notes": "v1.2.10\n- 安装包强制显示“选择目标位置”页面，默认 C:\\Program Files\\Git Push，用户可自定义安装到 D 盘或任意目录\n- 版本升级到 1.2.10，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
   "update_url": "https://install.nekoaidev.top/update.zip"
 }

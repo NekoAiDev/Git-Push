@@ -10,10 +10,12 @@
 
 [Setup]
 AppName=Git Push
-AppVersion=1.2.9
-AppVerName=Git Push 1.2.9
+AppVersion=1.2.10
+AppVerName=Git Push 1.2.10
 AppPublisher=NekoAiDev
 DefaultDirName=C:\Program Files\Git Push
+; 强制显示“选择目标位置”页面，允许用户自定义安装到 D 盘或其他任意目录（默认仍是 C:\Program Files）
+DisableDirPage=no
 DefaultGroupName=Git Push
 OutputDir=D:\AppData\WorkBuddyData\.workbuddy\2026-08-02-10-27-24
 OutputBaseFilename=GitPush_Setup
