@@ -204,6 +204,9 @@ export default {
         const os_version = String(d.os_version || "").slice(0, 64);
         const username = String(d.username || "").slice(0, 64);
 
+        // 取客户端 IP 与地理位置（服务端从请求头 / Cloudflare 边缘数据获取，无需工具端上报）
+        const loc = await getClientLocation(request, env);
+
         // 每个匿名设备一条记录
         const ukey = "u:" + uuid;
         let u = {};
@@ -217,6 +220,11 @@ export default {
         if (hostname) u.hostname = hostname;
         if (os_version) u.os_version = os_version;
         if (username) u.username = username;
+        if (loc.ip) u.ip = loc.ip;
+        if (loc.country) u.country = loc.country;
+        if (loc.region) u.region = loc.region;
+        if (loc.city) u.city = loc.city;
+        if (loc.location) u.location = loc.location;
         await env.GP_STATS.put(ukey, JSON.stringify(u));
 
         // 全局汇总（累加增量，低频统计竞态可忽略）
@@ -379,6 +387,53 @@ async function verifySessionToken(token) {
 }
 
 // ---- 后台面板辅助函数 ----
+async function getClientLocation(request, env) {
+  // 取客户端公网 IP（Cloudflare 边缘注入的头最可靠）
+  let ip = request.headers.get("CF-Connecting-IP")
+        || (request.headers.get("x-forwarded-for") || "").split(",")[0].trim()
+        || (request.cf && request.cf.ip) || "";
+  // Cloudflare 自带地理数据（零成本、零延迟，但对中国常返回英文或缺失）
+  let country = (request.cf && request.cf.country) || "";
+  let region = (request.cf && request.cf.region) || "";
+  let city = (request.cf && request.cf.city) || "";
+
+  // 中国 IP：Cloudflare 给的是英文/常缺失，统一用 ip-api.com（免费、无需 key、中文）拿中文省/市；结果缓存到 KV 7 天省额度
+  // 非中国 IP：直接用 Cloudflare 自带英文数据即可，避免额外外部调用
+  if (country === "CN" && ip) {
+    try {
+      let cached = null;
+      try { cached = await env.GP_STATS.get("geo:" + ip, { type: "json" }); } catch (e) {}
+      if (cached && cached.regionName) {
+        region = cached.regionName;
+        city = cached.city || "";
+        country = cached.country || country;
+      } else {
+        const r = await fetch("http://ip-api.com/json/" + ip + "?lang=zh-CN&fields=status,message,country,regionName,city,query");
+        if (r.ok) {
+          const j = await r.json();
+          if (j && j.status === "success") {
+            region = j.regionName || region;
+            city = j.city || city;
+            country = j.country || country;
+            try {
+              await env.GP_STATS.put("geo:" + ip, JSON.stringify({ country, regionName: region, city }), { expirationTtl: 7 * 86400 });
+            } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 行政区划后缀归一化（去掉「省/市/自治区」等，便于去重与简洁展示，如「北京」）
+  const normAdmin = (s) => (s || "").replace(/(维吾尔|壮族|回族|自治区|省|市|地区|区)$/g, "");
+  // 展示串：省 市（同名/包含关系去重，如「北京」），否则国家，否则未知
+  let location;
+  const rN = normAdmin(region), cN = normAdmin(city);
+  if (rN && cN && rN !== cN && !region.includes(city) && !city.includes(region)) location = rN + " " + cN;
+  else location = rN || cN || country || "未知";
+  return { ip, country, region, city, location };
+}
+
 function adminLoginHtml(msg, isError) {
   const tip = msg ? `<p style="color:#c0392b;margin:0 0 14px;font-size:14px">${msg}</p>` : "";
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
@@ -433,11 +488,13 @@ function adminPanelHtml(g, onlineUsers, activeToday, active7, verDist) {
     const os = u.os_version || "-";
     const usr = u.username || "-";
     const ver = u.version || "未知";
+    const ip = u.ip || "-";
+    const locTxt = u.location || "-";
     const push = num(u.push_count);
     const upd = num(u.update_count);
-    return `<tr><td>${name}</td><td>${os}</td><td>${usr}</td><td>${ver}</td><td>${seen}</td><td>${push}</td><td>${upd}</td></tr>`;
+    return `<tr><td>${name}</td><td>${os}</td><td>${usr}</td><td>${ver}</td><td>${ip}</td><td>${locTxt}</td><td>${seen}</td><td>${push}</td><td>${upd}</td></tr>`;
   }).join("");
-  const table = rows ? `<table class="dev-table"><thead><tr><th>计算机名</th><th>系统版本</th><th>用户名</th><th>工具版本</th><th>最近上报</th><th>推送</th><th>更新</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="empty">当前没有在线设备</p>`;
+  const table = rows ? `<table class="dev-table"><thead><tr><th>计算机名</th><th>系统版本</th><th>用户名</th><th>工具版本</th><th>IP</th><th>地区</th><th>最近上报</th><th>推送</th><th>更新</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="empty">当前没有在线设备</p>`;
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>GitPush 数据后台</title>
