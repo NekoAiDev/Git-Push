@@ -17,6 +17,11 @@ const UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/dist
 // 安装包（25MB+）经 Worker 流式代理：用流式响应绕过 Worker 大响应体缓冲上限，走 Cloudflare 网络比直连 raw.githubusercontent.com 更快
 const INSTALLER_UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/GitPush_Setup.exe";
 
+// 后台鉴权
+const ADMIN_PWD = "mw41KUHH65WCIEcqsPoy";
+const SESSION_SECRET = "ec419e1cd1970dc5cf2fb55fbfd7a5a06c1053aa4ae16334c13a2696bc3ee9fb"; // 仅用于 HMAC 签名登录会话 Cookie，非密码
+const SESSION_COOKIE = "gp_sid";
+
 const LANDING = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -233,56 +238,85 @@ export default {
       }
     }
 
-    // 2.7) GET /admin → 密码保护的后台统计面板（带失败次数限制，防爆破）
-    if (p === "/admin") {
-      const pwd = url.searchParams.get("pwd") || "";
+    // 2.7) 后台：密码登录 + 签名会话 Cookie（刷新/重开浏览器在有效期内免输密码）
+    // 2.7.1) 退出登录
+    if (p === "/admin/logout") {
+      const headers = new Headers({ "Location": "/admin" });
+      headers.append("Set-Cookie",
+        `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
+      return new Response(null, { status: 302, headers });
+    }
 
-      // 失败次数限制：连续 5 次错误后锁定 15 分钟
+    // 2.7.2) POST /admin/login → 校验密码并下发会话 Cookie
+    if (p === "/admin/login" && request.method === "POST") {
       let fail = {};
       try { fail = JSON.parse(await env.GP_STATS.get("admin_fail") || "{}"); } catch (e) {}
       if ((fail.count || 0) >= 5 && (Date.now() - (fail.ts || 0)) < 15 * 60 * 1000) {
-        return new Response("尝试次数过多，请 15 分钟后再试", {
-          headers: { "Content-Type": "text/plain; charset=utf-8" }, status: 429,
+        return new Response(adminLoginHtml("尝试次数过多，请 15 分钟后再试", true), {
+          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
         });
       }
-
-      if (pwd !== "mw41KUHH65WCIEcqsPoy") {
+      let pwd = "", remember = false;
+      try {
+        const form = await request.formData();
+        pwd = String(form.get("pwd") || "");
+        remember = form.get("remember") === "1" || form.get("remember") === "on";
+      } catch (e) {}
+      if (pwd !== ADMIN_PWD) {
         fail.count = (fail.count || 0) + 1;
         fail.ts = Date.now();
         try { await env.GP_STATS.put("admin_fail", JSON.stringify(fail)); } catch (e) {}
         const left = Math.max(0, 5 - fail.count);
-        return new Response(adminLoginHtml(left > 0 ? `密码错误，还可尝试 ${left} 次` : "密码错误"), {
-          headers: { "Content-Type": "text/html; charset=utf-8" }, status: 401,
+        return new Response(adminLoginHtml(left > 0 ? `密码错误，还可尝试 ${left} 次` : "密码错误", true), {
+          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }, status: 401,
+        });
+      }
+      try { await env.GP_STATS.put("admin_fail", JSON.stringify({ count: 0, ts: 0 })); } catch (e) {}
+      const maxAge = remember ? 30 * 24 * 3600 : 7 * 24 * 3600;
+      const token = await makeSessionToken(Date.now() + maxAge * 1000);
+      const headers = new Headers({ "Location": "/admin" });
+      headers.append("Set-Cookie",
+        `${SESSION_COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
+      return new Response(null, { status: 302, headers });
+    }
+
+    // 2.7.3) GET /admin → 面板（校验会话 Cookie；兼容旧书签 ?pwd=）
+    if (p === "/admin") {
+      const cookieHeader = request.headers.get("Cookie") || "";
+      const token = parseCookie(cookieHeader, SESSION_COOKIE);
+      const authed = token ? await verifySessionToken(token) : false;
+
+      // 兼容旧书签：?pwd= 也能登录，并顺带下发会话 Cookie
+      let authedByPwd = false;
+      const pwd = url.searchParams.get("pwd") || "";
+      if (!authed && pwd && pwd === ADMIN_PWD) authedByPwd = true;
+
+      if (!authed && !authedByPwd) {
+        let fail = {};
+        try { fail = JSON.parse(await env.GP_STATS.get("admin_fail") || "{}"); } catch (e) {}
+        if ((fail.count || 0) >= 5 && (Date.now() - (fail.ts || 0)) < 15 * 60 * 1000) {
+          return new Response("尝试次数过多，请 15 分钟后再试", {
+            headers: { "Content-Type": "text/plain; charset=utf-8" }, status: 429,
+          });
+        }
+        return new Response(adminLoginHtml("", false), {
+          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }, status: 200,
         });
       }
 
-      // 验证通过，重置失败计数
+      // 通过认证：重置失败计数
       try { await env.GP_STATS.put("admin_fail", JSON.stringify({ count: 0, ts: 0 })); } catch (e) {}
 
-      let g = {};
-      try { g = await env.GP_STATS.get("g", { type: "json" }) || {}; } catch (e) {}
-      let users = [];
-      try {
-        const list = await env.GP_STATS.list({ prefix: "u:" });
-        for (const k of list.keys) {
-          try {
-            const u = await env.GP_STATS.get(k.name, { type: "json" });
-            if (u) users.push(u);
-          } catch (e) {}
-        }
-      } catch (e) {}
-      const now = Date.now();
-      const day = 86400000;
-      const ONLINE_MS = 5 * 60 * 1000; // 5 分钟内视为在线
-      const onlineUsers = users.filter((u) => ((u.last_seen || 0) * 1000) > now - ONLINE_MS);
-      const activeToday = users.filter((u) => ((u.last_seen || 0) * 1000) > now - day).length;
-      const active7 = users.filter((u) => ((u.last_seen || 0) * 1000) > now - 7 * day).length;
-      const verMap = {};
-      for (const u of onlineUsers) { const v = u.version || "未知"; verMap[v] = (verMap[v] || 0) + 1; }
-      const verDist = Object.entries(verMap).map(([v, c]) => `${v}: ${c}`).join("，") || "暂无";
-      return new Response(adminPanelHtml(g, onlineUsers, activeToday, active7, verDist), {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
+      const panelResp = await buildAdminPanel(env);
+      panelResp.headers.set("Cache-Control", "no-store");
+      // 若是用旧 ?pwd= 进来的，补发会话 Cookie，之后刷新不再要密码
+      if (authedByPwd && !authed) {
+        const maxAge = 7 * 24 * 3600;
+        const newToken = await makeSessionToken(Date.now() + maxAge * 1000);
+        panelResp.headers.append("Set-Cookie",
+          `${SESSION_COOKIE}=${newToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
+      }
+      return panelResp;
     }
 
     // 3) 其他 → 404
@@ -290,22 +324,106 @@ export default {
   },
 };
 
+// ---- 会话签名辅助 ----
+function parseCookie(header, name) {
+  if (!header) return "";
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx < 0) continue;
+    const k = part.slice(0, idx).trim();
+    const v = part.slice(idx + 1).trim();
+    if (k === name) return decodeURIComponent(v);
+  }
+  return "";
+}
+function b64urlEncode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function b64urlDecode(s) {
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+async function hmacHex(message, secret) {
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function makeSessionToken(expiryMs) {
+  const body = b64urlEncode(JSON.stringify({ e: expiryMs }));
+  const sig = await hmacHex(body, SESSION_SECRET);
+  return body + "." + sig;
+}
+async function verifySessionToken(token) {
+  if (!token || typeof token !== "string" || !token.includes(".")) return false;
+  const idx = token.lastIndexOf(".");
+  const body = token.slice(0, idx);
+  const sig = token.slice(idx + 1);
+  const expected = await hmacHex(body, SESSION_SECRET);
+  if (sig !== expected) return false;
+  try {
+    const payload = JSON.parse(b64urlDecode(body));
+    return (payload.e || 0) > Date.now();
+  } catch (e) {
+    return false;
+  }
+}
+
 // ---- 后台面板辅助函数 ----
-function adminLoginHtml(msg) {
+function adminLoginHtml(msg, isError) {
   const tip = msg ? `<p style="color:#c0392b;margin:0 0 14px;font-size:14px">${msg}</p>` : "";
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>GitPush 后台</title>
   <style>body{font-family:"Microsoft YaHei",sans-serif;background:#f4f6f9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-  .box{background:#fff;padding:32px 40px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.08);text-align:center}
-  input{padding:10px 14px;font-size:15px;border:1px solid #ccc;border-radius:8px;width:240px}
-  button{margin-top:14px;padding:10px 26px;font-size:15px;border:none;border-radius:8px;background:#FF6B3D;color:#fff;cursor:pointer}
+  .box{background:#fff;padding:32px 40px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.08);text-align:center;width:300px}
+  input[type=password]{padding:10px 14px;font-size:15px;border:1px solid #ccc;border-radius:8px;width:100%;box-sizing:border-box}
+  label{display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px;color:#666;justify-content:center}
+  button{margin-top:18px;padding:10px 26px;font-size:15px;border:none;border-radius:8px;background:#FF6B3D;color:#fff;cursor:pointer;width:100%}
   h2{margin:0 0 18px;color:#333}</style></head>
   <body><div class="box"><h2>GitPush 数据后台</h2>
   ${tip}
-  <form method="get"><input type="password" name="pwd" placeholder="请输入后台密码" autofocus>
-  <br><button type="submit">进入</button></form></div></body></html>`;
+  <form method="post" action="/admin/login"><input type="password" name="pwd" placeholder="请输入后台密码" autofocus>
+  <label><input type="checkbox" name="remember" value="1"> 记住我（30 天内免登录）</label>
+  <button type="submit">进入</button></form></div></body></html>`;
 }
+
+async function buildAdminPanel(env) {
+  let g = {};
+  try { g = await env.GP_STATS.get("g", { type: "json" }) || {}; } catch (e) {}
+  let users = [];
+  try {
+    const list = await env.GP_STATS.list({ prefix: "u:" });
+    for (const k of list.keys) {
+      try {
+        const u = await env.GP_STATS.get(k.name, { type: "json" });
+        if (u) users.push(u);
+      } catch (e) {}
+    }
+  } catch (e) {}
+  const now = Date.now();
+  const day = 86400000;
+  const ONLINE_MS = 5 * 60 * 1000; // 5 分钟内视为在线
+  const onlineUsers = users.filter((u) => ((u.last_seen || 0) * 1000) > now - ONLINE_MS);
+  const activeToday = users.filter((u) => ((u.last_seen || 0) * 1000) > now - day).length;
+  const active7 = users.filter((u) => ((u.last_seen || 0) * 1000) > now - 7 * day).length;
+  const verMap = {};
+  for (const u of onlineUsers) { const v = u.version || "未知"; verMap[v] = (verMap[v] || 0) + 1; }
+  const verDist = Object.entries(verMap).map(([v, c]) => `${v}: ${c}`).join("，") || "暂无";
+  return new Response(adminPanelHtml(g, onlineUsers, activeToday, active7, verDist), {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
 function adminPanelHtml(g, onlineUsers, activeToday, active7, verDist) {
   const num = (n) => (n || 0).toLocaleString("zh-CN");
   const last = g.last_report ? new Date(g.last_report * 1000).toLocaleString("zh-CN") : "暂无";
@@ -324,7 +442,10 @@ function adminPanelHtml(g, onlineUsers, activeToday, active7, verDist) {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>GitPush 数据后台</title>
   <style>body{font-family:"Microsoft YaHei",sans-serif;background:#f4f6f9;margin:0;padding:32px;color:#222}
-  h1{font-size:22px;margin:0 0 20px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
+  h1{font-size:22px;margin:0 0 20px;display:flex;align-items:center;justify-content:space-between}
+  .logout{font-size:13px;background:#fff;border:1px solid #ddd;color:#666;padding:8px 14px;border-radius:8px;text-decoration:none}
+  .logout:hover{background:#f0f0f0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
   .card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 6px 20px rgba(0,0,0,.06)}
   .card .k{font-size:13px;color:#888}.card .v{font-size:28px;font-weight:700;margin-top:6px;color:#FF6B3D}
   .section{margin-top:32px;background:#fff;border-radius:12px;padding:20px;box-shadow:0 6px 20px rgba(0,0,0,.06)}
@@ -337,7 +458,7 @@ function adminPanelHtml(g, onlineUsers, activeToday, active7, verDist) {
   .empty{color:#999;padding:20px 0}
   .meta{margin-top:24px;font-size:13px;color:#666;line-height:1.8}
   a{color:#1a73e8;text-decoration:none}</style></head>
-  <body><h1>GitPush 匿名数据统计后台</h1>
+  <body><h1>GitPush 匿名数据统计后台<a class="logout" href="/admin/logout">退出登录</a></h1>
   <div class="grid">
     <div class="card"><div class="k">累计推送次数</div><div class="v">${num(g.total_push)}</div></div>
     <div class="card"><div class="k">累计更新次数</div><div class="v">${num(g.total_update)}</div></div>
@@ -352,6 +473,6 @@ function adminPanelHtml(g, onlineUsers, activeToday, active7, verDist) {
   </div>
   <div class="meta">版本分布（在线）：${verDist}<br>最近一次上报：${last}<br>
   在线判定：最近 5 分钟内有上报的设备，超时未上报自动下线不显示。<br>
-  安全说明：后台不记录密码；admin_fail 仅记录登录失败次数用于防爆破，每次刷新 /admin 都需重新输入密码。<br>
+  安全说明：登录后通过 HMAC 签名的会话 Cookie 保持登录（默认 7 天，勾选"记住我"为 30 天），刷新或重开浏览器在有效期内均无需重新输入密码；后台绝不记录密码（admin_fail 仅记录登录失败次数用于防爆破）。<br>
   <a href="/admin">刷新</a></div></body></html>`;
 }
