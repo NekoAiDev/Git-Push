@@ -203,6 +203,8 @@ export default {
         const hostname = String(d.hostname || "").slice(0, 64);
         const os_version = String(d.os_version || "").slice(0, 64);
         const username = String(d.username || "").slice(0, 64);
+        // 用户手动设置的所在地区（省份），优先于 IP 库估算；仅当非空时覆盖，避免清空既有值
+        const region_user = String(d.region_user || "").slice(0, 32);
 
         // 取客户端 IP 与地理位置（服务端从请求头 / Cloudflare 边缘数据获取，无需工具端上报）
         const loc = await getClientLocation(request, env);
@@ -220,6 +222,7 @@ export default {
         if (hostname) u.hostname = hostname;
         if (os_version) u.os_version = os_version;
         if (username) u.username = username;
+        if (region_user) u.region_user = region_user;
         if (loc.ip) u.ip = loc.ip;
         if (loc.country) u.country = loc.country;
         if (loc.region) u.region = loc.region;
@@ -489,7 +492,8 @@ function adminPanelHtml(g, onlineUsers, activeToday, active7, verDist) {
     const usr = u.username || "-";
     const ver = u.version || "未知";
     const ip = u.ip || "-";
-    const locTxt = u.location || "-";
+    const regionUser = u.region_user || "";
+    const locTxt = (regionUser || u.location || "-") + (regionUser ? "（手动）" : (u.location ? "（IP估算）" : ""));
     const push = num(u.push_count);
     const upd = num(u.update_count);
     return `<tr><td>${name}</td><td>${os}</td><td>${usr}</td><td>${ver}</td><td>${ip}</td><td>${locTxt}</td><td>${seen}</td><td>${push}</td><td>${upd}</td></tr>`;

@@ -39,7 +39,7 @@ import platform
 STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.3.7"
+APP_VERSION = "1.3.8"
 
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
@@ -69,7 +69,7 @@ Git Push 工具 用户服务协议
     （五）本次使用会话的启动时间与持续时长（以毫秒计）；
     （六）本次上报所对应的事件类型（包括：推送成功、更新成功、会话结束）；
     （七）您的计算机名、Windows 版本与当前用户名。这些信息仅用于后台管理员识别在线设备、避免同一台计算机因路径变化被重复统计，不会用于识别您个人身份或进行用户画像。
-    （八）您的公网 IP 地址及其所属地区（省/市级）。该信息由服务器在接收上报请求时自动获取，仅用于后台管理员查看设备的大致地理分布，不进行精确地理位置追踪，亦不用于识别您个人身份或进行用户画像。
+    （八）您的公网 IP 地址及其所属地区（省/市级）。该信息由服务器在接收上报请求时自动获取，仅用于后台管理员查看设备的大致地理分布，不进行精确地理位置追踪，亦不用于识别您个人身份或进行用户画像。您亦可在「设置 → 隐私与统计」中手动选择所在省份，后台将优先显示您手动设置的地区（免费 IP 库对国内 IPv6 定位常有偏差，手动设置最准确）。
 2.3 上述数据在您首次启动软件时，会弹出提示明确征询您的同意。只有在您选择"同意"后，软件才会进行上述上报；若您选择"拒绝"，或在本地删除对应的匿名标识文件，软件将完全停止此类上报，且不影响任何其它功能的正常使用。
 2.4 关于上述数据的收集、使用、存储与保护等更多细节，请参阅与本协议一并提供的《Git Push 工具 隐私政策》。
 
@@ -134,7 +134,7 @@ Git Push 工具 隐私政策
 1.5 会话启动时间与持续时长：本次使用会话的开始时刻，以及自开始到本次上报时的运行时长（毫秒）。
 1.6 事件类型：本次上报对应的事件，包括"推送成功""更新成功""会话结束"。
 1.7 计算机名、Windows 版本、当前用户名：仅用于后台管理员识别在线设备、判断是否为同一台计算机，避免同一设备因路径变化被重复统计。这些信息仅在您同意匿名统计后才会上报，且仅存储在后台供管理员查看。
-1.8 公网 IP 地址与所属地区（省/市）：由服务器在接收上报请求时，从网络请求头中自动获取您的公网 IP，并结合第三方 IP 地理库（ip-api.com）解析出所属的省/市级地区。该信息仅用于后台管理员查看在线设备的地理分布，不进行精确追踪，亦不用于用户画像。
+1.8 公网 IP 地址与所属地区（省/市）：由服务器在接收上报请求时，从网络请求头中自动获取您的公网 IP，并结合第三方 IP 地理库（ip-api.com）解析出所属的省/市级地区。该信息仅用于后台管理员查看在线设备的地理分布，不进行精确追踪，亦不用于用户画像。您亦可在「设置 → 隐私与统计」中手动选择所在省份，后台将优先显示您手动设置的地区（免费 IP 库对国内 IPv6 定位常有偏差，手动设置最准确）。
 
 二、我们如何收集这些信息
 2.1 匿名设备标识在您首次运行本软件时于本地随机生成，并保存在您计算机的 %LOCALAPPDATA%\GitPush\stats.json 文件以及注册表 HKEY_CURRENT_USER\Software\NekoAiDev\GitPush 中，双保险存储以避免单文件换目录或重装后产生重复统计。除 UUID 外，上述位置还保存推送次数、更新次数、是否同意统计以及计算机名、系统版本、用户名等仅用于设备识别的基础信息。
@@ -1053,6 +1053,8 @@ class GitPushTool:
             "confirm_push": False,        # 推送前确认
             "remember_path": False,       # 启动时自动填入上次选择的路径
             "confirm_exit": False,         # 关闭窗口时确认（防误关）
+            # 所在地区（手动设置省份，用于后台准确显示设备归属；留空=按 IP 库估算）
+            "region_user": "",            # 如 "广西" / "广东" / ""（自动）
         }
         try:
             path = self._settings_path()
@@ -1273,6 +1275,14 @@ class GitPushTool:
         # 更新
         skip_ver_var = tk.StringVar(value=settings.get("skip_version", ""))
 
+        # 所在地区（手动选择省份，后台优先显示，避免 IP 库对国内 IPv6 定位不准）
+        region_user_var = tk.StringVar(value=settings.get("region_user", "") or "自动（按IP估算）")
+        REGION_CHOICES = ["自动（按IP估算）", "北京", "天津", "河北", "山西", "内蒙古", "辽宁", "吉林",
+                          "黑龙江", "上海", "江苏", "浙江", "安徽", "福建", "江西", "山东", "河南",
+                          "湖北", "湖南", "广东", "广西", "海南", "重庆", "四川", "贵州", "云南",
+                          "西藏", "陕西", "甘肃", "青海", "宁夏", "新疆", "香港", "澳门", "台湾",
+                          "海外/其他"]
+
         add_mode_map = {"all": "全部文件 (git add -A)",
                         "update": "仅已跟踪修改 (git add -u)",
                         "selected": "仅所选路径 / 文件"}
@@ -1369,7 +1379,11 @@ class GitPushTool:
         frm_privacy = ttk.LabelFrame(content, text="隐私与统计", padding=(12, 8))
         frm_privacy.pack(fill="x", padx=14, pady=(4, 4))
         ttk.Checkbutton(frm_privacy, text="允许发送匿名使用统计（默认开启，可随时关闭）", variable=stats_var).pack(anchor="w", pady=2)
-        ttk.Label(frm_privacy, text="数据仅含：推送次数 / 更新次数 / 使用时长，不含任何文件、仓库或隐私", style="Small.TLabel").pack(anchor="w")
+        ttk.Label(frm_privacy, text="数据仅含：推送次数 / 更新次数 / 使用时长 / 设备地区，不含任何文件、仓库或隐私", style="Small.TLabel").pack(anchor="w")
+        ttk.Label(frm_privacy, text="所在地区（用于后台准确显示设备归属）：").pack(anchor="w", pady=(6, 0))
+        region_cb = ttk.Combobox(frm_privacy, textvariable=region_user_var, state="readonly", width=20, values=REGION_CHOICES)
+        region_cb.pack(anchor="w", pady=(0, 2))
+        ttk.Label(frm_privacy, text="免费 IP 库对国内 IPv6 定位常有偏差，手动选择省份最准确；选“自动”则按 IP 库估算", style="Small.TLabel").pack(anchor="w")
 
         # ---- 自动与界面 ----
         frm4 = ttk.LabelFrame(content, text="自动与界面", padding=(12, 8))
@@ -1448,6 +1462,7 @@ class GitPushTool:
                 "log_font_size": (lambda x: max(7, min(20, int(x) if str(x).strip().isdigit() else 10)))(log_font_var.get()),
                 "maximize_on_start": maximize_var.get(),
                 "skip_version": skip_ver_var.get().strip(),
+                "region_user": "" if region_user_var.get() == "自动（按IP估算）" else region_user_var.get().strip(),
             }
             self._save_settings(new_settings)
             # 隐私开关同步到统计配置
@@ -1494,6 +1509,7 @@ class GitPushTool:
                 "hostname": self.stats.get("hostname", ""),
                 "os_version": self.stats.get("os_version", ""),
                 "username": self.stats.get("username", ""),
+                "region_user": (self.settings or {}).get("region_user", "") or "",
             }
             data = json.dumps(payload).encode("utf-8")
 
