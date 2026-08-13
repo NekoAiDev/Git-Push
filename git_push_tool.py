@@ -36,7 +36,7 @@ import uuid as _uuid
 STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.3.3"
 
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
@@ -229,6 +229,8 @@ class GitPushTool:
         # 初始化匿名统计（默认开启；首次启动不再弹窗询问，可在「服务」→「使用收集」中修改）
         self._init_stats()
         self._apply_settings()
+        # 关闭窗口确认（若开启）
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # 启动时检查 git
         if not is_git_available():
@@ -360,23 +362,61 @@ class GitPushTool:
         self.root.config(menu=menubar)
 
     # ---------------------------------------------------------------- 选择
+    def _save_last_path(self, p):
+        """记录最近一次选择的本地路径（供「记住路径」功能使用）。"""
+        try:
+            s = self._load_settings()
+            s["last_path"] = p
+            self._save_settings(s)
+        except Exception:
+            pass
+
     def _pick_folder(self):
         p = filedialog.askdirectory(title="选择要推送的文件夹")
         if p:
             self.path_var.set(p)
+            self._save_last_path(p)
 
     def _pick_file(self):
         p = filedialog.askopenfilename(title="选择要推送的单个文件")
         if p:
             self.path_var.set(p)
+            self._save_last_path(p)
 
     # ---------------------------------------------------------------- 日志
     def log(self, text):
         self.root.after(0, self._append_log, str(text))
 
     def _append_log(self, text):
+        try:
+            settings = self._load_settings()
+        except Exception:
+            settings = {}
+        ts = settings.get("log_timestamp", True)
+        prefix = datetime.now().strftime("[%H:%M:%S] ") if ts else ""
+        line = prefix + str(text) + "\n"
+
+        # 日志存档（若开启）
+        if settings.get("save_log"):
+            try:
+                lp = (settings.get("log_path", "") or "").strip()
+                if not lp:
+                    lp = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "GitPush.log")
+                with open(lp, "a", encoding="utf-8") as f:
+                    f.write(line)
+            except Exception:
+                pass
+
         self.log_box.configure(state="normal")
-        self.log_box.insert(tk.END, text + "\n")
+        self.log_box.insert(tk.END, line)
+        # 行数上限截断（超出自动删除最旧的行）
+        try:
+            max_lines = max(50, int(settings.get("log_max_lines", 1000) or 1000))
+            cnt = int(self.log_box.index("end-1c").split(".")[0])
+            if cnt > max_lines:
+                self.log_box.delete("1.0", f"{cnt - max_lines + 1}.0")
+        except Exception:
+            pass
         self.log_box.configure(state="disabled")
         self.log_box.see(tk.END)
 
@@ -410,6 +450,17 @@ class GitPushTool:
         add_mode = settings.get("add_mode", "all")
         push_tags = bool(settings.get("push_tags", False))
         auto_tag = settings.get("auto_tag", "").strip()
+        allow_empty = bool(settings.get("allow_empty", False))
+        no_verify = bool(settings.get("no_verify", False))
+        gpg_sign = bool(settings.get("gpg_sign", False))
+        amend = bool(settings.get("amend", False))
+        pull_before_push = bool(settings.get("pull_before_push", False))
+        try:
+            retry_on_fail = max(0, int(settings.get("retry_on_fail", 0) or 0))
+        except Exception:
+            retry_on_fail = 0
+        use_proxy = bool(settings.get("use_proxy", False))
+        proxy_url = settings.get("proxy_url", "").strip()
 
         if not path:
             messagebox.showerror("出错啦", "请先选择要 Push 的文件夹或文件")
@@ -421,12 +472,24 @@ class GitPushTool:
             messagebox.showerror("出错啦", "主人填的路径不存在喵~请检查一下")
             return
 
+        # 记住本次选择的路径（供「记住路径」功能使用）
+        try:
+            if settings.get("remember_path") and path:
+                s2 = dict(settings)
+                s2["last_path"] = path
+                self._save_settings(s2)
+        except Exception:
+            pass
+
         self.running = True
         self.root.after(0, lambda: self.push_btn.config(state="disabled"))
         self.set_status("正在推送中…")
         t = threading.Thread(target=self.do_push,
                              args=(path, repo, branch, commit, remote, force,
-                                   add_mode, push_tags, auto_tag),
+                                   add_mode, push_tags, auto_tag,
+                                   allow_empty, no_verify, gpg_sign, amend,
+                                   pull_before_push, retry_on_fail,
+                                   use_proxy, proxy_url),
                              daemon=True)
         t.start()
 
@@ -462,8 +525,17 @@ class GitPushTool:
             return ""
 
     def do_push(self, path, repo, branch, commit, remote, force,
-                add_mode="all", push_tags=False, auto_tag=""):
+                add_mode="all", push_tags=False, auto_tag="",
+                allow_empty=False, no_verify=False, gpg_sign=False,
+                amend=False, pull_before_push=False, retry_on_fail=0,
+                use_proxy=False, proxy_url=""):
         try:
+            # 代理参数（仅作用到 push / pull 这类网络命令）
+            proxy_args = []
+            if use_proxy and proxy_url:
+                proxy_args = ["-c", f"http.proxy={proxy_url}",
+                              "-c", f"https.proxy={proxy_url}"]
+
             # 单个文件 -> 用所在目录作为仓库根，并只 add 该文件
             if os.path.isfile(path):
                 repo_dir = os.path.dirname(path)
@@ -513,12 +585,26 @@ class GitPushTool:
                 self.log(f"➕ 添加所选内容：{add_target}")
                 self.run(["git", "add", add_target], repo_dir)
 
-            # 5) git commit（仅当有改动）
-            status = self._git_out(["status", "--porcelain"], repo_dir).strip()
-            if status:
-                self.run(["git", "commit", "-m", commit], repo_dir)
+            # 5) git commit
+            commit_cmd = ["git", "commit", "-m", commit]
+            if amend:
+                # 追加提交：在 commit 与 -m 之间插入 --amend
+                commit_cmd = ["git", "commit", "--amend", "-m", commit]
+            if no_verify:
+                commit_cmd.append("--no-verify")
+            if gpg_sign:
+                commit_cmd.append("--gpg-sign")
+            if amend:
+                # 追加提交不依赖是否有改动，直接改写上次提交
+                self.run(commit_cmd, repo_dir)
             else:
-                self.log("💡 没有新的改动，跳过 commit ")
+                status = self._git_out(["status", "--porcelain"], repo_dir).strip()
+                if status or allow_empty:
+                    if allow_empty and not status:
+                        self.log("💡 没有新改动，但已开启「允许空提交」，仍创建空提交")
+                    self.run(commit_cmd, repo_dir)
+                else:
+                    self.log("💡 没有新的改动，跳过 commit ")
 
             # 6) git remote
             remotes = self._git_out(["remote"], repo_dir).split()
@@ -528,8 +614,6 @@ class GitPushTool:
                 self.run(["git", "remote", "add", remote, repo], repo_dir)
 
             # 6.5) 确定要推送的本地 ref —— 修复 issue #2「src refspec main does not match any」
-            # 当本地不存在用户填写的分支名时（例如本地当前分支是 master，但默认填了 main），
-            # 直接 push <branch> 会失败。这里先探测本地分支，再用正确的 refspec 推送。
             local_branches = [b.strip() for b in
                               self._git_out(["branch", "--format=%(refname:short)"], repo_dir).split()
                               if b.strip()]
@@ -555,14 +639,26 @@ class GitPushTool:
                 self.log(f"🏷️ 自动打标签：{auto_tag}")
                 self.run(["git", "tag", "-f", auto_tag], repo_dir)
 
-            # 7) git push
-            cmd = ["git", "push"]
+            # 6.9) 推送前先拉取并变基（可选）
+            if pull_before_push:
+                self.log("⬇️ 推送前先拉取并变基（git pull --rebase）")
+                self.run(["git"] + proxy_args + ["pull", "--rebase", remote, branch], repo_dir)
+
+            # 7) git push（支持失败重试）
+            cmd = ["git"] + proxy_args + ["push"]
             if force:
                 cmd.append("--force")
             if push_tags:
                 cmd.append("--follow-tags")
             cmd += ["-u", remote, push_ref]
-            rc = self.run(cmd, repo_dir)
+            attempts = 1 + max(0, int(retry_on_fail or 0))
+            rc = 1
+            for attempt in range(1, attempts + 1):
+                if attempt > 1:
+                    self.log(f"🔁 第 {attempt} 次重试推送…")
+                rc = self.run(cmd, repo_dir)
+                if rc == 0:
+                    break
 
             # 7.5) 推送自动打的标签
             if rc == 0 and auto_tag:
@@ -667,17 +763,38 @@ class GitPushTool:
             pass
 
     def _open_data_collection(self):
-        """服务菜单「使用收集」入口：先提示默认开启，再让用户选择是否同意。"""
+        """服务菜单「使用收集」入口：打开独立设置窗口，不再弹 messagebox 阻塞提示。"""
         try:
-            messagebox.showinfo("使用收集", "默认已开启统计")
-            ans = messagebox.askyesno(
-                "匿名使用统计",
-                "为了持续改进 Git Push 工具，我们想收集极少量的匿名使用数据，\n"
-                "例如：推送成功次数、更新次数、使用时长（仅统计，不含任何文件/仓库/隐私）。\n\n"
-                "是否同意在您使用时发送这些匿名统计数据？"
-            )
-            self.stats["consent"] = bool(ans)
-            self._save_stats()
+            win = tk.Toplevel(self.root)
+            win.title("使用收集 - 匿名统计")
+            win.geometry("470x250")
+            win.transient(self.root)
+            win.resizable(False, False)
+
+            cur = bool(self.stats.get("consent", True))
+            var = tk.BooleanVar(value=cur)
+
+            ttk.Label(win, text="匿名使用统计",
+                      font=("Microsoft YaHei", 13, "bold")).pack(pady=(14, 6))
+            ttk.Label(win,
+                      text="默认已开启匿名使用统计。\n"
+                           "我们仅收集极少量匿名数据（推送次数 / 更新次数 / 使用时长），\n"
+                           "不含任何文件、仓库路径或个人隐私。",
+                      justify="left", wraplength=410).pack(padx=18)
+            ttk.Checkbutton(win, text="允许发送匿名使用统计", variable=var).pack(pady=(10, 4))
+
+            def _save():
+                try:
+                    self.stats["consent"] = bool(var.get())
+                    self._save_stats()
+                except Exception:
+                    pass
+                win.destroy()
+
+            btn = ttk.Frame(win)
+            btn.pack(side="bottom", fill="x", padx=14, pady=10)
+            ttk.Button(btn, text="保存", command=_save).pack(side="right", padx=(6, 0))
+            ttk.Button(btn, text="取消", command=win.destroy).pack(side="right")
         except Exception:
             pass
 
@@ -689,17 +806,37 @@ class GitPushTool:
             "commit_msg": "Auto push by Git Push工具",
             "force_push": False,
             "auto_fill": False,
+            "last_path": "",              # 记住上次选择的本地路径
+            # 提交信息模板
+            "commit_template_enabled": False,
+            "commit_template": "Auto push {date} {time}",
+            # 提交选项
+            "allow_empty": False,         # git commit --allow-empty
+            "no_verify": False,           # git commit --no-verify（跳过钩子）
+            "gpg_sign": False,            # git commit --gpg-sign
+            "amend": False,               # git commit --amend（追加到上次提交）
             # 推送行为
             "add_mode": "all",            # all / update / selected
             "push_tags": False,           # push 时 --follow-tags
             "auto_tag": "",               # 推送前自动打的标签名（留空不打）
-            # 提交信息模板
-            "commit_template_enabled": False,
-            "commit_template": "Auto push {date} {time}",
+            "pull_before_push": False,    # push 前 git pull --rebase
+            "retry_on_fail": 0,           # push 失败重试次数（0=不重试）
+            # 网络
+            "use_proxy": False,           # 使用 HTTP/HTTPS 代理
+            "proxy_url": "",              # 代理地址，如 http://127.0.0.1:7890
+            # 日志
+            "log_timestamp": True,        # 每条日志加 [HH:MM:SS] 前缀
+            "log_max_lines": 1000,        # 日志最大行数（超出自动截断）
+            "save_log": False,            # 推送日志自动保存到文件
+            "log_path": "",               # 日志文件路径（留空=程序同目录 GitPush.log）
+            # 隐私与统计
+            "allow_stats": True,          # 允许发送匿名使用统计（默认开启）
             # 自动与界面
             "auto_check_update": True,    # 启动后静默检查更新
             "topmost": False,             # 窗口置顶
             "confirm_push": False,        # 推送前确认
+            "remember_path": False,       # 启动时自动填入上次选择的路径
+            "confirm_exit": False,         # 关闭窗口时确认（防误关）
         }
         try:
             path = self._settings_path()
@@ -732,6 +869,11 @@ class GitPushTool:
                 self.root.after(2500, self._background_check_update)
         except Exception:
             pass
+        # 记住路径：仅在当前未填写时自动填入上次路径
+        if settings.get("remember_path") and not self.path_var.get().strip():
+            lp = settings.get("last_path", "").strip()
+            if lp and os.path.exists(lp):
+                self.path_var.set(lp)
         # 自动填入默认推送信息
         if not settings.get("auto_fill"):
             return
@@ -744,6 +886,26 @@ class GitPushTool:
         if settings.get("commit_msg"):
             self.commit_var.set(settings["commit_msg"])
         self.force_var.set(bool(settings.get("force_push", False)))
+
+    def _on_close(self):
+        try:
+            settings = self._load_settings()
+        except Exception:
+            settings = {}
+        if settings.get("confirm_exit"):
+            try:
+                if self.running:
+                    if not messagebox.askyesno("退出确认", "正在推送中，确定要退出吗？"):
+                        return
+                else:
+                    if not messagebox.askyesno("退出确认", "确定要退出 Git Push 工具吗？"):
+                        return
+            except Exception:
+                pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
     def _fill_template(self, tpl, branch):
         """把提交信息模板里的占位符替换成实际值。"""
@@ -770,13 +932,29 @@ class GitPushTool:
         except Exception:
             return False
 
+    def _urlopen_with_proxy(self, req, timeout=8):
+        """发起 HTTP 请求；若设置了代理则走 HTTP/HTTPS 代理。"""
+        try:
+            settings = self._load_settings()
+        except Exception:
+            settings = {}
+        proxy = (settings.get("proxy_url", "") or "").strip()
+        if settings.get("use_proxy") and proxy:
+            try:
+                handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
+                opener = urllib.request.build_opener(handler)
+                return opener.open(req, timeout=timeout)
+            except Exception:
+                pass
+        return urllib.request.urlopen(req, timeout=timeout)
+
     def _background_check_update(self):
         """后台静默检查更新，仅发现新版本时弹窗提示，不主动打扰。"""
         try:
             req = urllib.request.Request(
                 "https://install.nekoaidev.top/version.json",
                 headers={"User-Agent": "GitPush"})
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with self._urlopen_with_proxy(req, timeout=8) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             remote_ver = data.get("version", "")
             if self._version_lt(APP_VERSION, remote_ver):
@@ -790,11 +968,23 @@ class GitPushTool:
     def _open_settings(self):
         win = tk.Toplevel(self.root)
         win.title("设置 - 推送与行为")
-        win.geometry("560x700")
+        win.geometry("600x680")
         win.transient(self.root)
-        win.resizable(False, False)
+        win.resizable(False, True)
 
         settings = self._load_settings()
+
+        # 可滚动容器（设置项较多，整体可滚动查看）
+        _sc = ttk.Scrollbar(win, orient="vertical")
+        _cv = tk.Canvas(win, yscrollcommand=_sc.set, borderwidth=0, highlightthickness=0)
+        _sc.config(command=_cv.yview)
+        _cv.pack(side="left", fill="both", expand=True)
+        _sc.pack(side="right", fill="y")
+        content = ttk.Frame(_cv, padding=(2, 2))
+        _cwin = _cv.create_window((0, 0), window=content, anchor="nw")
+        content.bind("<Configure>", lambda e: _cv.configure(scrollregion=_cv.bbox("all")))
+        _cv.bind("<Configure>", lambda e: _cv.itemconfig(_cwin, width=e.width))
+        _cv.bind_all("<MouseWheel>", lambda e: _cv.yview_scroll(int(-1 * (e.delta / 120)), "units"))
 
         # 通用变量
         auto_fill_var = tk.BooleanVar(value=bool(settings.get("auto_fill", False)))
@@ -808,9 +998,30 @@ class GitPushTool:
         auto_tag_var = tk.StringVar(value=settings.get("auto_tag", ""))
         tmpl_enabled_var = tk.BooleanVar(value=bool(settings.get("commit_template_enabled", False)))
         tmpl_var = tk.StringVar(value=settings.get("commit_template", "Auto push {date} {time}"))
+        # 提交选项
+        allow_empty_var = tk.BooleanVar(value=bool(settings.get("allow_empty", False)))
+        no_verify_var = tk.BooleanVar(value=bool(settings.get("no_verify", False)))
+        gpg_sign_var = tk.BooleanVar(value=bool(settings.get("gpg_sign", False)))
+        amend_var = tk.BooleanVar(value=bool(settings.get("amend", False)))
+        # 推送前拉取 / 重试
+        pull_var = tk.BooleanVar(value=bool(settings.get("pull_before_push", False)))
+        retry_var = tk.StringVar(value=str(settings.get("retry_on_fail", 0)))
+        # 网络
+        proxy_en_var = tk.BooleanVar(value=bool(settings.get("use_proxy", False)))
+        proxy_url_var = tk.StringVar(value=settings.get("proxy_url", ""))
+        # 日志
+        ts_var = tk.BooleanVar(value=bool(settings.get("log_timestamp", True)))
+        maxlines_var = tk.StringVar(value=str(settings.get("log_max_lines", 1000)))
+        save_log_var = tk.BooleanVar(value=bool(settings.get("save_log", False)))
+        logpath_var = tk.StringVar(value=settings.get("log_path", ""))
+        # 隐私与统计
+        stats_var = tk.BooleanVar(value=bool(settings.get("allow_stats", True)))
+        # 自动与界面
         auto_check_var = tk.BooleanVar(value=bool(settings.get("auto_check_update", True)))
         topmost_var = tk.BooleanVar(value=bool(settings.get("topmost", False)))
         confirm_var = tk.BooleanVar(value=bool(settings.get("confirm_push", False)))
+        remember_var = tk.BooleanVar(value=bool(settings.get("remember_path", False)))
+        confirm_exit_var = tk.BooleanVar(value=bool(settings.get("confirm_exit", False)))
 
         add_mode_map = {"all": "全部文件 (git add -A)",
                         "update": "仅已跟踪修改 (git add -u)",
@@ -818,7 +1029,7 @@ class GitPushTool:
         add_mode_rev = {v: k for k, v in add_mode_map.items()}
 
         # ---- 默认推送信息 ----
-        frm1 = ttk.LabelFrame(win, text="默认推送信息", padding=(12, 8))
+        frm1 = ttk.LabelFrame(content, text="默认推送信息", padding=(12, 8))
         frm1.pack(fill="x", padx=14, pady=(6, 4))
         ttk.Label(frm1, text="远程仓库：").grid(row=0, column=0, sticky="w", pady=3)
         ttk.Entry(frm1, textvariable=repo_var).grid(row=0, column=1, sticky="ew", padx=(0, 6))
@@ -833,7 +1044,7 @@ class GitPushTool:
         frm1.columnconfigure(1, weight=1)
 
         # ---- 提交信息模板 ----
-        frm2 = ttk.LabelFrame(win, text="提交信息模板", padding=(12, 8))
+        frm2 = ttk.LabelFrame(content, text="提交信息模板", padding=(12, 8))
         frm2.pack(fill="x", padx=14, pady=(4, 4))
         ttk.Checkbutton(frm2, text="启用提交信息模板（将覆盖上方“提交信息”）", variable=tmpl_enabled_var).grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(frm2, text="模板：").grid(row=1, column=0, sticky="w", pady=3)
@@ -841,8 +1052,16 @@ class GitPushTool:
         ttk.Label(frm2, text="可用占位符：{date} 日期  {time} 时间  {datetime} 日期时间  {branch} 分支", style="Small.TLabel").grid(row=2, column=1, sticky="w")
         frm2.columnconfigure(1, weight=1)
 
+        # ---- 提交选项 ----
+        frm_commit = ttk.LabelFrame(content, text="提交选项", padding=(12, 8))
+        frm_commit.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Checkbutton(frm_commit, text="允许空提交 (--allow-empty)", variable=allow_empty_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frm_commit, text="跳过 Git 钩子 (--no-verify，谨慎使用)", variable=no_verify_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frm_commit, text="GPG 签名提交 (--gpg-sign，需本机已配置 GPG)", variable=gpg_sign_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frm_commit, text="追加到上次提交 (--amend，不新建提交)", variable=amend_var).pack(anchor="w", pady=2)
+
         # ---- 推送行为 ----
-        frm3 = ttk.LabelFrame(win, text="推送行为", padding=(12, 8))
+        frm3 = ttk.LabelFrame(content, text="推送行为", padding=(12, 8))
         frm3.pack(fill="x", padx=14, pady=(4, 4))
         ttk.Label(frm3, text="git add 方式：").grid(row=0, column=0, sticky="w", pady=3)
         add_cb = ttk.Combobox(frm3, textvariable=add_mode_var, state="readonly", width=26,
@@ -853,16 +1072,54 @@ class GitPushTool:
         ttk.Label(frm3, text="自动打标签：").grid(row=2, column=0, sticky="w", pady=3)
         ttk.Entry(frm3, textvariable=auto_tag_var, width=24).grid(row=2, column=1, sticky="w", padx=(0, 6))
         ttk.Label(frm3, text="留空不打；支持占位符 {date} {time} {branch}", style="Small.TLabel").grid(row=3, column=1, sticky="w")
+        ttk.Checkbutton(frm3, text="推送前先拉取并变基 (git pull --rebase)", variable=pull_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Label(frm3, text="推送失败重试次数：").grid(row=5, column=0, sticky="w", pady=3)
+        ttk.Entry(frm3, textvariable=retry_var, width=8).grid(row=5, column=1, sticky="w", padx=(0, 6))
+        ttk.Label(frm3, text="0 = 不重试", style="Small.TLabel").grid(row=6, column=1, sticky="w")
+
+        # ---- 网络代理 ----
+        frm_net = ttk.LabelFrame(content, text="网络代理", padding=(12, 8))
+        frm_net.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Checkbutton(frm_net, text="使用 HTTP/HTTPS 代理（作用于推送 / 拉取与更新检查）", variable=proxy_en_var).pack(anchor="w", pady=2)
+        ttk.Label(frm_net, text="代理地址：").pack(anchor="w", pady=(2, 0))
+        ttk.Entry(frm_net, textvariable=proxy_url_var).pack(fill="x", pady=(0, 2))
+        ttk.Label(frm_net, text="例：http://127.0.0.1:7890", style="Small.TLabel").pack(anchor="w")
+
+        # ---- 日志 ----
+        frm_log = ttk.LabelFrame(content, text="日志", padding=(12, 8))
+        frm_log.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Checkbutton(frm_log, text="每条日志加时间戳 [HH:MM:SS]", variable=ts_var).pack(anchor="w", pady=2)
+        ttk.Label(frm_log, text="日志最大行数（超出自动截断）：").pack(anchor="w", pady=(2, 0))
+        ttk.Entry(frm_log, textvariable=maxlines_var, width=10).pack(anchor="w", pady=(0, 2))
+        ttk.Checkbutton(frm_log, text="推送日志自动保存到文件", variable=save_log_var).pack(anchor="w", pady=(4, 0))
+        ttk.Label(frm_log, text="保存路径（留空=程序同目录 GitPush.log）：").pack(anchor="w", pady=(2, 0))
+        ttk.Entry(frm_log, textvariable=logpath_var).pack(fill="x", pady=(0, 2))
+
+        # ---- 隐私与统计 ----
+        frm_privacy = ttk.LabelFrame(content, text="隐私与统计", padding=(12, 8))
+        frm_privacy.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Checkbutton(frm_privacy, text="允许发送匿名使用统计（默认开启，可随时关闭）", variable=stats_var).pack(anchor="w", pady=2)
+        ttk.Label(frm_privacy, text="数据仅含：推送次数 / 更新次数 / 使用时长，不含任何文件、仓库或隐私", style="Small.TLabel").pack(anchor="w")
 
         # ---- 自动与界面 ----
-        frm4 = ttk.LabelFrame(win, text="自动与界面", padding=(12, 8))
+        frm4 = ttk.LabelFrame(content, text="自动与界面", padding=(12, 8))
         frm4.pack(fill="x", padx=14, pady=(4, 4))
         ttk.Checkbutton(frm4, text="下次启动时自动填入默认设置", variable=auto_fill_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frm4, text="记住上次选择的本地路径（下次启动自动填入）", variable=remember_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(frm4, text="启动后自动检查更新（仅在发现新版本时提示）", variable=auto_check_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(frm4, text="窗口始终置顶显示", variable=topmost_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(frm4, text="推送前弹出确认框", variable=confirm_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frm4, text="关闭窗口时确认（防止误关）", variable=confirm_exit_var).pack(anchor="w", pady=2)
 
         def _save():
+            try:
+                retry_n = max(0, int(retry_var.get().strip() or 0))
+            except Exception:
+                retry_n = 0
+            try:
+                maxlines_n = max(50, int(maxlines_var.get().strip() or 1000))
+            except Exception:
+                maxlines_n = 1000
             new_settings = {
                 "auto_fill": auto_fill_var.get(),
                 "remote_repo": repo_var.get().strip(),
@@ -870,16 +1127,38 @@ class GitPushTool:
                 "remote_name": remote_var.get().strip() or "origin",
                 "commit_msg": commit_var.get().strip() or "Auto push by Git Push工具",
                 "force_push": force_var.get(),
+                "last_path": settings.get("last_path", ""),
                 "add_mode": add_mode_rev.get(add_cb.get(), "all"),
                 "push_tags": push_tags_var.get(),
                 "auto_tag": auto_tag_var.get().strip(),
                 "commit_template_enabled": tmpl_enabled_var.get(),
                 "commit_template": tmpl_var.get().strip() or "Auto push {date} {time}",
+                "allow_empty": allow_empty_var.get(),
+                "no_verify": no_verify_var.get(),
+                "gpg_sign": gpg_sign_var.get(),
+                "amend": amend_var.get(),
+                "pull_before_push": pull_var.get(),
+                "retry_on_fail": retry_n,
+                "use_proxy": proxy_en_var.get(),
+                "proxy_url": proxy_url_var.get().strip(),
+                "log_timestamp": ts_var.get(),
+                "log_max_lines": maxlines_n,
+                "save_log": save_log_var.get(),
+                "log_path": logpath_var.get().strip(),
+                "allow_stats": stats_var.get(),
                 "auto_check_update": auto_check_var.get(),
                 "topmost": topmost_var.get(),
                 "confirm_push": confirm_var.get(),
+                "remember_path": remember_var.get(),
+                "confirm_exit": confirm_exit_var.get(),
             }
             self._save_settings(new_settings)
+            # 隐私开关同步到统计配置
+            try:
+                self.stats["consent"] = bool(stats_var.get())
+                self._save_stats()
+            except Exception:
+                pass
             try:
                 self.root.attributes("-topmost", bool(new_settings.get("topmost", False)))
             except Exception:
@@ -890,7 +1169,7 @@ class GitPushTool:
             messagebox.showinfo("设置已保存", "设置已保存喵~")
 
         btn_frm = ttk.Frame(win)
-        btn_frm.pack(fill="x", padx=14, pady=(12, 10))
+        btn_frm.pack(side="bottom", fill="x", padx=14, pady=(10, 10))
         ttk.Button(btn_frm, text="保存", command=_save).pack(side="right", padx=(6, 0))
         ttk.Button(btn_frm, text="取消", command=win.destroy).pack(side="right")
 
@@ -927,7 +1206,7 @@ class GitPushTool:
                                  "User-Agent": "GitPush/" + APP_VERSION},
                         method="POST",
                     )
-                    with urllib.request.urlopen(req, timeout=5) as resp:
+                    with self._urlopen_with_proxy(req, timeout=5) as resp:
                         resp.read()
                 except Exception:
                     pass

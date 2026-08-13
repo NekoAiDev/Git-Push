@@ -1,5 +1,5 @@
 {
-  "version": "1.3.2",
-  "notes": "v1.3.2\n- 设置窗口大幅扩展，分四组：默认推送信息 / 提交信息模板 / 推送行为 / 自动与界面\n- 推送行为新增：git add 方式（全部/仅修改/仅所选）、推送时附带标签(--follow-tags)、自动打标签(支持占位符)\n- 提交信息模板：可启用占位符模板 {date}{time}{datetime}{branch} 自动生成提交信息\n- 自动与界面新增：启动后自动检查更新(仅发现新版提示)、窗口始终置顶、推送前弹出确认框\n- 版本升级到 1.3.2，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
+  "version": "1.3.3",
+  "notes": "v1.3.3\n- 去掉「使用收集」的 messagebox 弹窗，改为独立设置窗口\n- 设置窗口大幅扩充（可滚动）：新增「提交选项」(允许空提交 / 跳过 Git 钩子 / GPG 签名 / 追加提交)、「网络代理」、「日志」(时间戳 / 行数上限 / 自动存档)、「隐私与统计」分组\n- 「自动与界面」新增：记住上次选择的本地路径、关闭窗口确认\n- 「推送行为」新增：推送前先拉取并变基 (git pull --rebase)、推送失败自动重试\n- 上述设置均已接入实际推送 / 日志 / 更新检查逻辑\n- 版本升级到 1.3.3，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
   "update_url": "https://install.nekoaidev.top/update.zip"
 }

@@ -8,7 +8,7 @@ $log = Join-Path $dir "iscc_log.txt"
 
 $proc = Start-Process -FilePath $iscc -ArgumentList $iss -Wait -PassThru `
     -RedirectStandardOutput $out -RedirectStandardError $err -NoNewWindow
-"ISCC 退出码: $($proc.ExitCode)" | Out-File -FilePath $log -Encoding utf8 -Append
+"ISCC exit code: $($proc.ExitCode)" | Out-File -FilePath $log -Encoding utf8 -Append
 "--- STDOUT ---" | Out-File -FilePath $log -Encoding utf8 -Append
 Get-Content $out | Out-File -FilePath $log -Encoding utf8 -Append
 "--- STDERR ---" | Out-File -FilePath $log -Encoding utf8 -Append
@@ -17,11 +17,10 @@ Get-Content $err | Out-File -FilePath $log -Encoding utf8 -Append
 if ($proc.ExitCode -eq 0) {
     $setup = Join-Path $dir "GitPush_Setup.exe"
     if (Test-Path $setup) {
-        # 取证书并给安装包签名
         $cert = Get-ChildItem "Cert:\CurrentUser\My" | Where-Object { $_.Subject -like "*NekoAiDev*" } | Select-Object -First 1
         $signed = Set-AuthenticodeSignature -FilePath $setup -Certificate $cert -TimestampServer "http://timestamp.digicert.com"
-        "安装包签名状态: $($signed.Status)  ($( (Get-Item $setup).Length ) 字节)" | Out-File -FilePath $log -Encoding utf8 -Append
+        "setup sign status: $($signed.Status)  ($( (Get-Item $setup).Length ) bytes)" | Out-File -FilePath $log -Encoding utf8 -Append
     } else {
-        "未生成 GitPush_Setup.exe" | Out-File -FilePath $log -Encoding utf8 -Append
+        "GitPush_Setup.exe not generated" | Out-File -FilePath $log -Encoding utf8 -Append
     }
 }
