@@ -30,3 +30,7 @@ public.zip
 
 # 工具运行时本地匿名统计配置（用户本机生成，含随机 UUID/计数，属隐私数据不入库）
 dist/stats.json
+
+# 工具运行时本地用户设置（用户本机生成，属个人配置，不入库）
+settings.json
+dist/settings.json

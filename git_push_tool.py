@@ -35,7 +35,7 @@ import uuid as _uuid
 STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
@@ -225,9 +225,9 @@ class GitPushTool:
         self._build_ui()
         self._build_menu()
 
-        # 初始化匿名统计（首次启动会弹窗询问是否同意）
+        # 初始化匿名统计（默认开启；首次启动不再弹窗询问，可在「服务」→「使用收集」中修改）
         self._init_stats()
-        self.root.after(400, self._maybe_ask_consent)
+        self._apply_settings()
 
         # 启动时检查 git
         if not is_git_available():
@@ -337,9 +337,6 @@ class GitPushTool:
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="使用说明", command=self._show_help)
         help_menu.add_separator()
-        help_menu.add_command(label="用户服务协议", command=lambda: self._show_doc("用户服务协议", DOC_EULA))
-        help_menu.add_command(label="隐私政策", command=lambda: self._show_doc("隐私政策", DOC_PRIVACY))
-        help_menu.add_separator()
         help_menu.add_command(label="问题反馈", command=self._open_issues)
         help_menu.add_command(label="关于", command=self._show_about)
         menubar.add_cascade(label="帮助", menu=help_menu)
@@ -347,6 +344,17 @@ class GitPushTool:
         update_menu = tk.Menu(menubar, tearoff=0)
         update_menu.add_command(label="检查更新", command=self._open_updater)
         menubar.add_cascade(label="更新(U)", menu=update_menu)
+
+        service_menu = tk.Menu(menubar, tearoff=0)
+        service_menu.add_command(label="用户服务协议", command=lambda: self._show_doc("用户服务协议", DOC_EULA))
+        service_menu.add_command(label="隐私政策", command=lambda: self._show_doc("隐私政策", DOC_PRIVACY))
+        service_menu.add_separator()
+        service_menu.add_command(label="使用收集", command=self._open_data_collection)
+        menubar.add_cascade(label="服务", menu=service_menu)
+
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        settings_menu.add_command(label="推送设置", command=self._open_settings)
+        menubar.add_cascade(label="设置", menu=settings_menu)
 
         self.root.config(menu=menubar)
 
@@ -574,11 +582,18 @@ class GitPushTool:
             base = os.getcwd()
         return os.path.join(base, "stats.json")
 
+    def _settings_path(self):
+        try:
+            base = os.path.dirname(os.path.abspath(sys.executable))
+        except Exception:
+            base = os.getcwd()
+        return os.path.join(base, "settings.json")
+
     def _init_stats(self):
         self.started_at = int(time.time())
         self.stats_path = self._stats_path()
         self.stats = {"uuid": "", "push_count": 0, "update_count": 0,
-                      "consent": None, "first_run": 0, "last_run": 0}
+                      "consent": True, "first_run": 0, "last_run": 0}
         try:
             if os.path.exists(self.stats_path):
                 with open(self.stats_path, "r", encoding="utf-8") as f:
@@ -612,6 +627,125 @@ class GitPushTool:
             self._save_stats()
         except Exception:
             pass
+
+    def _open_data_collection(self):
+        """服务菜单「使用收集」入口：先提示默认开启，再让用户选择是否同意。"""
+        try:
+            messagebox.showinfo("使用收集", "默认已开启统计")
+            ans = messagebox.askyesno(
+                "匿名使用统计",
+                "为了持续改进 Git Push 工具，我们想收集极少量的匿名使用数据，\n"
+                "例如：推送成功次数、更新次数、使用时长（仅统计，不含任何文件/仓库/隐私）。\n\n"
+                "是否同意在您使用时发送这些匿名统计数据？"
+            )
+            self.stats["consent"] = bool(ans)
+            self._save_stats()
+        except Exception:
+            pass
+
+    def _load_settings(self):
+        defaults = {
+            "remote_repo": "",
+            "branch": "main",
+            "remote_name": "origin",
+            "commit_msg": "Auto push by Git Push工具",
+            "force_push": False,
+            "auto_fill": False,
+        }
+        try:
+            path = self._settings_path()
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        defaults.update(loaded)
+        except Exception:
+            pass
+        return defaults
+
+    def _save_settings(self, settings):
+        try:
+            with open(self._settings_path(), "w", encoding="utf-8") as f:
+                json.dump(settings, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _apply_settings(self):
+        settings = self._load_settings()
+        if not settings.get("auto_fill"):
+            return
+        if settings.get("remote_repo"):
+            self.repo_var.set(settings["remote_repo"])
+        if settings.get("branch"):
+            self.branch_var.set(settings["branch"])
+        if settings.get("remote_name"):
+            self.remote_var.set(settings["remote_name"])
+        if settings.get("commit_msg"):
+            self.commit_var.set(settings["commit_msg"])
+        self.force_var.set(bool(settings.get("force_push", False)))
+
+    def _open_settings(self):
+        win = tk.Toplevel(self.root)
+        win.title("推送设置")
+        win.geometry("520x420")
+        win.transient(self.root)
+        win.resizable(False, False)
+
+        pad = {"padx": 14, "pady": 6}
+        settings = self._load_settings()
+
+        # 自动填充开关
+        auto_fill_var = tk.BooleanVar(value=bool(settings.get("auto_fill", False)))
+        ttk.Checkbutton(win, text="下次启动时自动填入默认设置", variable=auto_fill_var).pack(anchor="w", **pad)
+
+        frm = ttk.LabelFrame(win, text="默认推送信息", padding=(12, 8))
+        frm.pack(fill="x", padx=14, pady=6)
+
+        # 远程仓库
+        ttk.Label(frm, text="远程仓库：").grid(row=0, column=0, sticky="w", pady=4)
+        repo_var = tk.StringVar(value=settings.get("remote_repo", ""))
+        ttk.Entry(frm, textvariable=repo_var).grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        ttk.Label(frm, text="例：https://github.com/用户名/仓库.git", style="Small.TLabel").grid(row=1, column=1, sticky="w")
+
+        # 分支 / 远程名
+        ttk.Label(frm, text="分支名：").grid(row=2, column=0, sticky="w", pady=4)
+        branch_var = tk.StringVar(value=settings.get("branch", "main"))
+        ttk.Entry(frm, textvariable=branch_var, width=16).grid(row=2, column=1, sticky="w", padx=(0, 6))
+
+        ttk.Label(frm, text="远程名：").grid(row=3, column=0, sticky="w", pady=4)
+        remote_var = tk.StringVar(value=settings.get("remote_name", "origin"))
+        ttk.Entry(frm, textvariable=remote_var, width=12).grid(row=3, column=1, sticky="w", padx=(0, 6))
+
+        # 提交信息
+        ttk.Label(frm, text="提交信息：").grid(row=4, column=0, sticky="w", pady=4)
+        commit_var = tk.StringVar(value=settings.get("commit_msg", "Auto push by Git Push工具"))
+        ttk.Entry(frm, textvariable=commit_var).grid(row=4, column=1, sticky="ew", padx=(0, 6))
+
+        # 强制推送
+        force_var = tk.BooleanVar(value=bool(settings.get("force_push", False)))
+        ttk.Checkbutton(frm, text="强制推送 --force（危险！）", variable=force_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        frm.columnconfigure(1, weight=1)
+
+        def _save():
+            new_settings = {
+                "auto_fill": auto_fill_var.get(),
+                "remote_repo": repo_var.get().strip(),
+                "branch": branch_var.get().strip() or "main",
+                "remote_name": remote_var.get().strip() or "origin",
+                "commit_msg": commit_var.get().strip() or "Auto push by Git Push工具",
+                "force_push": force_var.get(),
+            }
+            self._save_settings(new_settings)
+            if new_settings["auto_fill"]:
+                self._apply_settings()
+            win.destroy()
+            messagebox.showinfo("设置已保存", "推送设置已保存喵~")
+
+        btn_frm = ttk.Frame(win)
+        btn_frm.pack(fill="x", padx=14, pady=(12, 8))
+        ttk.Button(btn_frm, text="保存", command=_save).pack(side="right", padx=(6, 0))
+        ttk.Button(btn_frm, text="取消", command=win.destroy).pack(side="right")
 
     def _report_event(self, event, join=False):
         # 仅在用户同意后才上报；仅发送匿名合法数据，绝不发送隐私
