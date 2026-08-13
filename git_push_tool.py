@@ -31,12 +31,13 @@ import urllib.request
 from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
 import webbrowser
 import uuid as _uuid
+import shutil
 
 # 统计上报接口（匿名、仅收集合法使用数据，绝不收集任何隐私）
 STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.3.4"
+APP_VERSION = "1.3.5"
 
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
@@ -1524,7 +1525,32 @@ class Updater:
             pass
 
     def _log(self, text):
-        self.parent.after(0, lambda: self._safe_call(self._append_log, str(text)))
+        ts = datetime.now().strftime("[%H:%M:%S] ")
+        self.parent.after(0, lambda: self._safe_call(self._append_log, ts + str(text)))
+
+    def _log_env(self):
+        """打印环境诊断信息到运行日志（更新前调用）。"""
+        try:
+            self._log("🔧 环境诊断：")
+            if getattr(sys, "frozen", False):
+                exe = os.path.abspath(sys.executable)
+                self._log(f"   运行模式：打包 exe（{exe}）")
+                install_dir = os.path.dirname(exe)
+            else:
+                exe = os.path.abspath(__file__)
+                self._log(f"   运行模式：Python 脚本（{exe}）")
+                install_dir = os.path.dirname(exe)
+            self._log(f"   安装目录：{install_dir}")
+            self._log(f"   临时目录：{tempfile.gettempdir()}")
+            self._log(f"   Python：{sys.version.split()[0]}  |  系统：{sys.platform}")
+            try:
+                total, used, free = shutil.disk_usage(install_dir)
+                self._log(f"   安装目录磁盘剩余：{free // (1024*1024)} MB / 共 {total // (1024*1024)} MB")
+            except Exception:
+                pass
+            self._log(f"   当前时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        except Exception as e:
+            self._log(f"   （环境诊断出错：{e}）")
 
     def _append_log(self, text):
         self.log_box.configure(state="normal")
@@ -1607,20 +1633,30 @@ class Updater:
 
     # ---------------------------------------------------------------- fetch version.json
     def _fetch_info(self):
+        self._log_env()
         def fetch():
             try:
+                t0 = time.time()
                 # 加时间戳绕过 raw 的 CDN 缓存，确保拿到最新 version.json
                 url = VERSION_JSON_URL + "?t=" + str(int(time.time()))
-                self._log(f"正在请求版本信息：{VERSION_JSON_URL}")
+                self._log(f"📡 正在请求版本信息：{VERSION_JSON_URL}")
                 req = urllib.request.Request(
                     url,
                     headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
                 )
                 with urllib.request.urlopen(req, timeout=20) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
+                    raw = resp.read()
+                    data = json.loads(raw.decode("utf-8"))
+                    elapsed = time.time() - t0
+                    self._log(f"✅ 版本信息请求成功（HTTP {resp.status}，{len(raw)} 字节，耗时 {elapsed:.2f}s）")
+                    self._log(f"   响应 Content-Type：{resp.headers.get('Content-Type', '?')}")
+                    self._log(f"   响应 Server：{resp.headers.get('Server', '?')}")
                 self.parent.after(0, self._on_info_ready, data)
             except Exception as e:
-                self.parent.after(0, self._on_error, f"读取版本信息失败：{e}")
+                code = getattr(e, 'code', None)
+                extra = f"（HTTP {code}）" if code else ""
+                self._log(f"❌ 读取版本信息失败：{e}{extra}")
+                self.parent.after(0, self._on_error, f"读取版本信息失败：{e}{extra}")
         threading.Thread(target=fetch, daemon=True).start()
 
     def _on_info_ready(self, data):
@@ -1629,9 +1665,22 @@ class Updater:
         self.info = data
         # 兼容两种字段名：update_url 优先，url 兜底
         self.update_url = data.get("update_url") or data.get("url")
+        url_source = "update_url" if data.get("update_url") else ("url" if data.get("url") else "无")
 
         notes = data.get("notes") or data.get("body") or "作者没有写更新说明"
         self._set_note(notes)
+
+        # 解析后的详细字段日志
+        self._log("📋 已解析 version.json：")
+        self._log(f"   本地版本：{self.current_version}")
+        self._log(f"   远程版本：{remote_ver}")
+        self._log(f"   更新包地址来源：{url_source}")
+        self._log(f"   更新包地址：{self.update_url or '（空）'}")
+        self._log(f"   更新说明长度：{len(str(notes))} 字符")
+        if data.get("force"):
+            self._log(f"   ⚠️ 远程标记 force={data.get('force')}，建议尽快更新")
+        if data.get("notes"):
+            self._log(f"   更新说明预览：{str(data.get('notes'))[:120]}")
 
         if not self.update_url:
             self._set_banner("未找到更新包地址，无法自动更新", "error")
@@ -1640,15 +1689,20 @@ class Updater:
             return
 
         cmp = self._compare_version(self.current_version, remote_ver)
+        cur = ".".join(map(str, self._parse_version(self.current_version)))
+        rem = ".".join(map(str, self._parse_version(remote_ver)))
         if cmp < 0:
+            self._log(f"🔍 版本比较：本地 {cur} < 远程 {rem} → 需要更新")
             self._set_banner(f"🎉 发现新版本 v{remote_ver}，建议立即更新！", "update")
             self._log(f"✅ 发现新版本：{remote_ver}，点击「立即更新」即可下载替换")
             self._set_btn("立即更新", True)
         elif cmp > 0:
+            self._log(f"🔍 版本比较：本地 {cur} > 远程 {rem} → 本地为更新版本")
             self._set_banner("当前版本比远程还新，无需更新", "ok")
             self._log("💡 当前版本比远程还新，无需更新")
             self._set_btn("无需更新", False)
         else:
+            self._log(f"🔍 版本比较：本地 {cur} == 远程 {rem} → 已是最新")
             self._set_banner("✅ 已经是最新版本啦", "ok")
             self._log("💡 已经是最新版本，无需更新")
             self._set_btn("无需更新", False)
@@ -1666,6 +1720,10 @@ class Updater:
             return
         self._set_btn("正在更新…", False)
         self._set_status("正在下载更新包…")
+        self._log("=" * 48)
+        self._log("🚀 开始更新流程")
+        self._log_env()
+        self._log(f"📦 更新包来源：{self.update_url}")
         self._log("开始下载更新压缩包，请稍候…")
         threading.Thread(target=self._download, daemon=True).start()
 
@@ -1673,19 +1731,26 @@ class Updater:
         try:
             tmp_dir = tempfile.gettempdir()
             zip_path = os.path.join(tmp_dir, "GitPush_update.zip")
-            self._log(f"下载目标：{zip_path}")
+            self._log(f"💾 下载目标文件：{zip_path}")
 
             # 给更新包 URL 加时间戳，强制绕过 Worker / 中间缓存，确保每次拿到最新版
             sep = "&" if "?" in self.update_url else "?"
             url = f"{self.update_url}{sep}t={int(time.time())}"
-            self._log(f"实际下载地址：{url}")
+            self._log(f"🌐 实际下载地址：{url}")
 
             req = urllib.request.Request(
                 url,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
             )
+            t0 = time.time()
+            last_log = -10
             with urllib.request.urlopen(req, timeout=180) as resp:
                 total = int(resp.headers.get("Content-Length", 0))
+                self._log(f"   响应 HTTP {resp.status}  Content-Type：{resp.headers.get('Content-Type', '?')}")
+                if total:
+                    self._log(f"📏 更新包总大小：{total // 1024} KB（{total} 字节）")
+                else:
+                    self._log("📏 更新包总大小：未知（服务器未返回 Content-Length）")
                 downloaded = 0
                 chunk_size = 64 * 1024
                 with open(zip_path, "wb") as f:
@@ -1698,19 +1763,39 @@ class Updater:
                         if total:
                             pct = downloaded * 100 // total
                             self._set_status(f"下载进度：{pct}%")
+                            if pct - last_log >= 5 or pct >= 100:
+                                speed = downloaded / (time.time() - t0 + 1e-6) / 1024
+                                self._log(f"   ⬇️ 下载进度 {pct}%  ({downloaded // 1024} / {total // 1024} KB, 速度 {speed:.0f} KB/s)")
+                                last_log = pct
                         else:
                             self._set_status(f"已下载：{downloaded // 1024} KB")
+                            if downloaded // (2 * 1024 * 1024) > last_log // (2 * 1024 * 1024):
+                                speed = downloaded / (time.time() - t0 + 1e-6) / 1024
+                                self._log(f"   ⬇️ 已下载 {downloaded // 1024} KB（速度 {speed:.0f} KB/s）")
+                                last_log = downloaded
+
+            elapsed = time.time() - t0
+            self._log(f"✅ 下载完成：{downloaded // 1024} KB，耗时 {elapsed:.2f}s，平均 {downloaded / (elapsed + 1e-6) / 1024:.0f} KB/s")
+            if total and downloaded != total:
+                self._log(f"⚠️ 实际下载大小 {downloaded} 与声明 Content-Length {total} 不一致，可能下载不完整")
+            if not os.path.exists(zip_path):
+                raise FileNotFoundError("下载文件未生成")
+            self._log(f"📁 已保存更新包：{zip_path}（{os.path.getsize(zip_path)} 字节）")
 
             self._set_status("下载完成，准备替换…")
-            self._log("✅ 下载完成，正在准备替换…")
+            self._log("下载完成，准备替换…")
             self.parent.after(0, self._prepare_replace, zip_path)
         except Exception as e:
-            self.parent.after(0, self._on_error, f"下载失败：{e}")
+            code = getattr(e, 'code', None)
+            extra = f"（HTTP {code}）" if code else ""
+            self._log(f"❌ 下载失败：{e}{extra}")
             self._set_btn("立即更新", True)
+            self.parent.after(0, self._on_error, f"下载失败：{e}{extra}")
 
     def _prepare_replace(self, zip_path):
         if not getattr(sys, "frozen", False):
             self._log("⚠️ 当前是脚本运行模式，无法自动替换 exe")
+            self._log(f"   更新包已下载到：{zip_path}（可手动解压覆盖）")
             messagebox.showinfo(
                 "开发模式",
                 "当前运行的是 Python 脚本，无法自动替换 exe。\n"
@@ -1722,10 +1807,22 @@ class Updater:
 
         # 工具所在目录（exe 同级）
         install_dir = os.path.dirname(os.path.abspath(sys.executable))
+        self._log(f"📂 安装目录：{install_dir}")
+        self._log(f"   安装目录是否存在：{'是' if os.path.isdir(install_dir) else '否'}")
         if not os.path.isdir(install_dir):
             self._log("❌ 找不到安装目录，无法替换")
             self._set_status("找不到安装目录")
             return
+
+        # 可写性检测（决定替换脚本是否需要提权）
+        try:
+            test_path = os.path.join(install_dir, "__wtest.tmp")
+            with open(test_path, "w") as tf:
+                tf.write("test")
+            os.remove(test_path)
+            self._log("✅ 安装目录可写，无需管理员提权")
+        except Exception:
+            self._log("⚠️ 安装目录不可写，替换脚本将自动请求管理员提权（UAC 弹窗）")
 
         # 生成替换脚本：检测写权限 → 无则提权 → 等旧进程退出 → 备份旧程序 → 解压覆盖 → 校验 → 启动新程序 → 清理
         bat_path = os.path.join(tempfile.gettempdir(), "update_gitpush.bat")
@@ -1787,8 +1884,22 @@ class Updater:
             self._set_status("生成替换脚本失败")
             return
 
-        self._log(f"已生成替换脚本：{bat_path}")
-        self._log("正在启动替换脚本并退出旧程序…")
+        self._log(f"📝 已生成替换脚本：{bat_path}")
+        self._log("   脚本将依次执行：等待旧进程退出 → 备份旧 exe → 解压覆盖 → 校验新程序 → 启动新版本 → 清理")
+        if os.path.exists(os.path.join(install_dir, "GitPush.exe")):
+            self._log("   将把现有 GitPush.exe 备份为 GitPush.exe.old 后再覆盖")
+        else:
+            self._log("   安装目录内尚未发现 GitPush.exe，将直接解压生成")
+        # 统计更新包内文件列表（预览）
+        try:
+            import zipfile
+            with zipfile.ZipFile(zip_path) as zf:
+                names = zf.namelist()
+                self._log(f"   更新包内含 {len(names)} 个文件：{', '.join(names[:8])}{' …' if len(names) > 8 else ''}")
+        except Exception:
+            pass
+        self._log("🚀 正在启动替换脚本并退出旧程序…")
+        self._log(f"   替换脚本路径：{bat_path}")
         # 记录一次「更新成功」事件（仅匿名统计，需用户已同意）
         try:
             self.parent._report_event("update", join=True)
