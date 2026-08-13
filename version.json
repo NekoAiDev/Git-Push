@@ -1,5 +1,5 @@
 {
-  "version": "1.3.1",
-  "notes": "v1.3.1\n- 菜单栏新增「服务」菜单：原「帮助」里的「用户服务协议」「隐私政策」移至此处；新增「使用收集」可查看/修改匿名统计同意状态\n- 菜单栏新增「设置」菜单：支持配置默认推送信息（远程仓库、分支、远程名、提交信息、强制推送），并可选「下次启动自动填入」\n- 首次启动不再弹窗询问匿名统计，改为默认开启，随时可在「服务」→「使用收集」中关闭\n- 版本升级到 1.3.1，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
+  "version": "1.3.2",
+  "notes": "v1.3.2\n- 设置窗口大幅扩展，分四组：默认推送信息 / 提交信息模板 / 推送行为 / 自动与界面\n- 推送行为新增：git add 方式（全部/仅修改/仅所选）、推送时附带标签(--follow-tags)、自动打标签(支持占位符)\n- 提交信息模板：可启用占位符模板 {date}{time}{datetime}{branch} 自动生成提交信息\n- 自动与界面新增：启动后自动检查更新(仅发现新版提示)、窗口始终置顶、推送前弹出确认框\n- 版本升级到 1.3.2，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
   "update_url": "https://install.nekoaidev.top/update.zip"
 }

@@ -21,6 +21,7 @@ import json
 import os
 import time
 import re
+from datetime import datetime
 import subprocess
 import sys
 import tempfile
@@ -35,7 +36,7 @@ import uuid as _uuid
 STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.3.2"
 
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
@@ -386,12 +387,29 @@ class GitPushTool:
     def start_push(self):
         if self.running:
             return
+        settings = self._load_settings()
+
+        # 推送前确认
+        if settings.get("confirm_push"):
+            if not messagebox.askyesno("确认推送", "确定要推送当前的更改吗？"):
+                return
+
         path = self.path_var.get().strip()
         repo = self.repo_var.get().strip()
         branch = self.branch_var.get().strip() or "main"
-        commit = self.commit_var.get().strip() or "Auto push by Git Push工具"
         remote = self.remote_var.get().strip() or "origin"
         force = self.force_var.get()
+
+        # 提交信息：启用模板则按模板生成，否则用主窗口填写的内容
+        if settings.get("commit_template_enabled") and settings.get("commit_template", "").strip():
+            commit = self._fill_template(settings["commit_template"], branch)
+        else:
+            commit = self.commit_var.get().strip() or "Auto push by Git Push工具"
+
+        # 其他推送行为设置
+        add_mode = settings.get("add_mode", "all")
+        push_tags = bool(settings.get("push_tags", False))
+        auto_tag = settings.get("auto_tag", "").strip()
 
         if not path:
             messagebox.showerror("出错啦", "请先选择要 Push 的文件夹或文件")
@@ -407,7 +425,8 @@ class GitPushTool:
         self.root.after(0, lambda: self.push_btn.config(state="disabled"))
         self.set_status("正在推送中…")
         t = threading.Thread(target=self.do_push,
-                             args=(path, repo, branch, commit, remote, force),
+                             args=(path, repo, branch, commit, remote, force,
+                                   add_mode, push_tags, auto_tag),
                              daemon=True)
         t.start()
 
@@ -442,7 +461,8 @@ class GitPushTool:
         except Exception:
             return ""
 
-    def do_push(self, path, repo, branch, commit, remote, force):
+    def do_push(self, path, repo, branch, commit, remote, force,
+                add_mode="all", push_tags=False, auto_tag=""):
         try:
             # 单个文件 -> 用所在目录作为仓库根，并只 add 该文件
             if os.path.isfile(path):
@@ -482,9 +502,16 @@ class GitPushTool:
                 self.log("   方案 A：用已缓存凭证的系统的凭据管理器；")
                 self.log("   方案 B：地址写成 https://<TOKEN>@github.com/用户/仓库.git")
 
-            # 4) git add
-            self.log(f"➕ 添加内容：{add_target}")
-            self.run(["git", "add", add_target], repo_dir)
+            # 4) git add（按设置的 add 方式）
+            if add_mode == "all":
+                self.log("➕ 添加所有改动（git add -A）")
+                self.run(["git", "add", "-A"], repo_dir)
+            elif add_mode == "update":
+                self.log("➕ 添加已跟踪文件的修改（git add -u）")
+                self.run(["git", "add", "-u"], repo_dir)
+            else:
+                self.log(f"➕ 添加所选内容：{add_target}")
+                self.run(["git", "add", add_target], repo_dir)
 
             # 5) git commit（仅当有改动）
             status = self._git_out(["status", "--porcelain"], repo_dir).strip()
@@ -523,12 +550,23 @@ class GitPushTool:
                 self.root.after(0, lambda: self.push_btn.config(state="normal"))
                 return
 
+            # 6.8) 推送前自动打标签
+            if auto_tag:
+                self.log(f"🏷️ 自动打标签：{auto_tag}")
+                self.run(["git", "tag", "-f", auto_tag], repo_dir)
+
             # 7) git push
             cmd = ["git", "push"]
             if force:
                 cmd.append("--force")
+            if push_tags:
+                cmd.append("--follow-tags")
             cmd += ["-u", remote, push_ref]
             rc = self.run(cmd, repo_dir)
+
+            # 7.5) 推送自动打的标签
+            if rc == 0 and auto_tag:
+                self.run(["git", "push", "-u", remote, auto_tag], repo_dir)
 
             if rc == 0:
                 self.log("🎉 推送成功！")
@@ -651,6 +689,17 @@ class GitPushTool:
             "commit_msg": "Auto push by Git Push工具",
             "force_push": False,
             "auto_fill": False,
+            # 推送行为
+            "add_mode": "all",            # all / update / selected
+            "push_tags": False,           # push 时 --follow-tags
+            "auto_tag": "",               # 推送前自动打的标签名（留空不打）
+            # 提交信息模板
+            "commit_template_enabled": False,
+            "commit_template": "Auto push {date} {time}",
+            # 自动与界面
+            "auto_check_update": True,    # 启动后静默检查更新
+            "topmost": False,             # 窗口置顶
+            "confirm_push": False,        # 推送前确认
         }
         try:
             path = self._settings_path()
@@ -672,6 +721,18 @@ class GitPushTool:
 
     def _apply_settings(self):
         settings = self._load_settings()
+        # 界面：窗口置顶
+        try:
+            self.root.attributes("-topmost", bool(settings.get("topmost", False)))
+        except Exception:
+            pass
+        # 自动检查更新（后台静默，仅在发现新版本时提示）
+        try:
+            if settings.get("auto_check_update", True):
+                self.root.after(2500, self._background_check_update)
+        except Exception:
+            pass
+        # 自动填入默认推送信息
         if not settings.get("auto_fill"):
             return
         if settings.get("remote_repo"):
@@ -684,48 +745,122 @@ class GitPushTool:
             self.commit_var.set(settings["commit_msg"])
         self.force_var.set(bool(settings.get("force_push", False)))
 
+    def _fill_template(self, tpl, branch):
+        """把提交信息模板里的占位符替换成实际值。"""
+        now = datetime.now()
+        return (tpl
+                .replace("{date}", now.strftime("%Y-%m-%d"))
+                .replace("{time}", now.strftime("%H:%M:%S"))
+                .replace("{datetime}", now.strftime("%Y-%m-%d %H:%M:%S"))
+                .replace("{branch}", branch or ""))
+
+    def _version_lt(self, cur, remote):
+        """返回 True 表示 remote 版本比 cur 新。"""
+        def parse(v):
+            parts = []
+            for x in re.split(r"[.\-]", str(v)):
+                parts.append(int(x) if x.isdigit() else 0)
+            return parts
+        try:
+            a, b = parse(cur), parse(remote)
+            n = max(len(a), len(b))
+            a += [0] * (n - len(a))
+            b += [0] * (n - len(b))
+            return a < b
+        except Exception:
+            return False
+
+    def _background_check_update(self):
+        """后台静默检查更新，仅发现新版本时弹窗提示，不主动打扰。"""
+        try:
+            req = urllib.request.Request(
+                "https://install.nekoaidev.top/version.json",
+                headers={"User-Agent": "GitPush"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            remote_ver = data.get("version", "")
+            if self._version_lt(APP_VERSION, remote_ver):
+                messagebox.showinfo(
+                    "发现新版本",
+                    f"检测到新版本 {remote_ver}（当前 {APP_VERSION}）\n\n"
+                    f"请在菜单「更新」→「检查更新」中进行升级喵~")
+        except Exception:
+            pass
+
     def _open_settings(self):
         win = tk.Toplevel(self.root)
-        win.title("推送设置")
-        win.geometry("520x420")
+        win.title("设置 - 推送与行为")
+        win.geometry("560x700")
         win.transient(self.root)
         win.resizable(False, False)
 
-        pad = {"padx": 14, "pady": 6}
         settings = self._load_settings()
 
-        # 自动填充开关
+        # 通用变量
         auto_fill_var = tk.BooleanVar(value=bool(settings.get("auto_fill", False)))
-        ttk.Checkbutton(win, text="下次启动时自动填入默认设置", variable=auto_fill_var).pack(anchor="w", **pad)
-
-        frm = ttk.LabelFrame(win, text="默认推送信息", padding=(12, 8))
-        frm.pack(fill="x", padx=14, pady=6)
-
-        # 远程仓库
-        ttk.Label(frm, text="远程仓库：").grid(row=0, column=0, sticky="w", pady=4)
         repo_var = tk.StringVar(value=settings.get("remote_repo", ""))
-        ttk.Entry(frm, textvariable=repo_var).grid(row=0, column=1, sticky="ew", padx=(0, 6))
-        ttk.Label(frm, text="例：https://github.com/用户名/仓库.git", style="Small.TLabel").grid(row=1, column=1, sticky="w")
-
-        # 分支 / 远程名
-        ttk.Label(frm, text="分支名：").grid(row=2, column=0, sticky="w", pady=4)
         branch_var = tk.StringVar(value=settings.get("branch", "main"))
-        ttk.Entry(frm, textvariable=branch_var, width=16).grid(row=2, column=1, sticky="w", padx=(0, 6))
-
-        ttk.Label(frm, text="远程名：").grid(row=3, column=0, sticky="w", pady=4)
         remote_var = tk.StringVar(value=settings.get("remote_name", "origin"))
-        ttk.Entry(frm, textvariable=remote_var, width=12).grid(row=3, column=1, sticky="w", padx=(0, 6))
-
-        # 提交信息
-        ttk.Label(frm, text="提交信息：").grid(row=4, column=0, sticky="w", pady=4)
         commit_var = tk.StringVar(value=settings.get("commit_msg", "Auto push by Git Push工具"))
-        ttk.Entry(frm, textvariable=commit_var).grid(row=4, column=1, sticky="ew", padx=(0, 6))
-
-        # 强制推送
         force_var = tk.BooleanVar(value=bool(settings.get("force_push", False)))
-        ttk.Checkbutton(frm, text="强制推送 --force（危险！）", variable=force_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        add_mode_var = tk.StringVar(value=settings.get("add_mode", "all"))
+        push_tags_var = tk.BooleanVar(value=bool(settings.get("push_tags", False)))
+        auto_tag_var = tk.StringVar(value=settings.get("auto_tag", ""))
+        tmpl_enabled_var = tk.BooleanVar(value=bool(settings.get("commit_template_enabled", False)))
+        tmpl_var = tk.StringVar(value=settings.get("commit_template", "Auto push {date} {time}"))
+        auto_check_var = tk.BooleanVar(value=bool(settings.get("auto_check_update", True)))
+        topmost_var = tk.BooleanVar(value=bool(settings.get("topmost", False)))
+        confirm_var = tk.BooleanVar(value=bool(settings.get("confirm_push", False)))
 
-        frm.columnconfigure(1, weight=1)
+        add_mode_map = {"all": "全部文件 (git add -A)",
+                        "update": "仅已跟踪修改 (git add -u)",
+                        "selected": "仅所选路径 / 文件"}
+        add_mode_rev = {v: k for k, v in add_mode_map.items()}
+
+        # ---- 默认推送信息 ----
+        frm1 = ttk.LabelFrame(win, text="默认推送信息", padding=(12, 8))
+        frm1.pack(fill="x", padx=14, pady=(6, 4))
+        ttk.Label(frm1, text="远程仓库：").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Entry(frm1, textvariable=repo_var).grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        ttk.Label(frm1, text="例：https://github.com/用户名/仓库.git", style="Small.TLabel").grid(row=1, column=1, sticky="w")
+        ttk.Label(frm1, text="分支名：").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Entry(frm1, textvariable=branch_var, width=16).grid(row=2, column=1, sticky="w", padx=(0, 6))
+        ttk.Label(frm1, text="远程名：").grid(row=3, column=0, sticky="w", pady=3)
+        ttk.Entry(frm1, textvariable=remote_var, width=12).grid(row=3, column=1, sticky="w", padx=(0, 6))
+        ttk.Label(frm1, text="提交信息：").grid(row=4, column=0, sticky="w", pady=3)
+        ttk.Entry(frm1, textvariable=commit_var).grid(row=4, column=1, sticky="ew", padx=(0, 6))
+        ttk.Checkbutton(frm1, text="强制推送 --force（危险！仅私人分支使用）", variable=force_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        frm1.columnconfigure(1, weight=1)
+
+        # ---- 提交信息模板 ----
+        frm2 = ttk.LabelFrame(win, text="提交信息模板", padding=(12, 8))
+        frm2.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Checkbutton(frm2, text="启用提交信息模板（将覆盖上方“提交信息”）", variable=tmpl_enabled_var).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(frm2, text="模板：").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Entry(frm2, textvariable=tmpl_var).grid(row=1, column=1, sticky="ew", padx=(0, 6))
+        ttk.Label(frm2, text="可用占位符：{date} 日期  {time} 时间  {datetime} 日期时间  {branch} 分支", style="Small.TLabel").grid(row=2, column=1, sticky="w")
+        frm2.columnconfigure(1, weight=1)
+
+        # ---- 推送行为 ----
+        frm3 = ttk.LabelFrame(win, text="推送行为", padding=(12, 8))
+        frm3.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Label(frm3, text="git add 方式：").grid(row=0, column=0, sticky="w", pady=3)
+        add_cb = ttk.Combobox(frm3, textvariable=add_mode_var, state="readonly", width=26,
+                              values=list(add_mode_map.values()))
+        add_cb.set(add_mode_map.get(settings.get("add_mode", "all"), add_mode_map["all"]))
+        add_cb.grid(row=0, column=1, sticky="w", padx=(0, 6))
+        ttk.Checkbutton(frm3, text="推送时附带已注释标签 (--follow-tags)", variable=push_tags_var).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Label(frm3, text="自动打标签：").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Entry(frm3, textvariable=auto_tag_var, width=24).grid(row=2, column=1, sticky="w", padx=(0, 6))
+        ttk.Label(frm3, text="留空不打；支持占位符 {date} {time} {branch}", style="Small.TLabel").grid(row=3, column=1, sticky="w")
+
+        # ---- 自动与界面 ----
+        frm4 = ttk.LabelFrame(win, text="自动与界面", padding=(12, 8))
+        frm4.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Checkbutton(frm4, text="下次启动时自动填入默认设置", variable=auto_fill_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frm4, text="启动后自动检查更新（仅在发现新版本时提示）", variable=auto_check_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frm4, text="窗口始终置顶显示", variable=topmost_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frm4, text="推送前弹出确认框", variable=confirm_var).pack(anchor="w", pady=2)
 
         def _save():
             new_settings = {
@@ -735,15 +870,27 @@ class GitPushTool:
                 "remote_name": remote_var.get().strip() or "origin",
                 "commit_msg": commit_var.get().strip() or "Auto push by Git Push工具",
                 "force_push": force_var.get(),
+                "add_mode": add_mode_rev.get(add_cb.get(), "all"),
+                "push_tags": push_tags_var.get(),
+                "auto_tag": auto_tag_var.get().strip(),
+                "commit_template_enabled": tmpl_enabled_var.get(),
+                "commit_template": tmpl_var.get().strip() or "Auto push {date} {time}",
+                "auto_check_update": auto_check_var.get(),
+                "topmost": topmost_var.get(),
+                "confirm_push": confirm_var.get(),
             }
             self._save_settings(new_settings)
+            try:
+                self.root.attributes("-topmost", bool(new_settings.get("topmost", False)))
+            except Exception:
+                pass
             if new_settings["auto_fill"]:
                 self._apply_settings()
             win.destroy()
-            messagebox.showinfo("设置已保存", "推送设置已保存喵~")
+            messagebox.showinfo("设置已保存", "设置已保存喵~")
 
         btn_frm = ttk.Frame(win)
-        btn_frm.pack(fill="x", padx=14, pady=(12, 8))
+        btn_frm.pack(fill="x", padx=14, pady=(12, 10))
         ttk.Button(btn_frm, text="保存", command=_save).pack(side="right", padx=(6, 0))
         ttk.Button(btn_frm, text="取消", command=win.destroy).pack(side="right")
 
