@@ -1,5 +1,5 @@
 {
-  "version": "1.3.5",
-  "notes": "v1.3.5\n- 「更新」窗口的运行日志大幅加厚（与推送日志同密度）：\n  新增环境诊断（运行模式/exe路径/安装目录/临时目录/Python版本/磁盘剩余/当前时间）、\n  版本检查详情（HTTP状态码、响应字节数、耗时、Content-Type、解析到的全部字段、版本比较明细）、\n  下载进度逐 5% 记录并带实时速度、下载总耗时与平均速度、下载后文件大小校验、\n  替换阶段详情（安装目录可写性检测与是否需提权、备份旧exe、更新包内文件清单预览、启动替换脚本路径）\n- 更新日志每条带 [HH:MM:SS] 时间戳\n- 版本升级到 1.3.5，重新打包并签名 dist/GitPush.exe、dist/update.zip、GitPush_Setup.exe",
+  "version": "1.3.6",
+  "notes": "v1.3.6\n- 统计系统改为按计算机稳定识别：UUID 保存到 %LOCALAPPDATA%\\GitPush\\stats.json 与注册表 HKEY_CURRENT_USER\\Software\\NekoAiDev\\GitPush，避免单文件换目录/重装导致重复计数。\n- 新增上报计算机名、Windows 版本、当前用户名，用于后台在线设备列表展示。\n- 后台 admin 面板新增「在线设备列表」，显示计算机名/系统版本/用户名/版本/最近上报/推送/更新；5 分钟内未上报自动下线不显示。\n- 后台已清空历史统计，从零重新计数。\n- 更新用户服务协议与隐私政策，补充新增字段说明。",
   "update_url": "https://install.nekoaidev.top/update.zip"
 }

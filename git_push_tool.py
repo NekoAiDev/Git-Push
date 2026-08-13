@@ -32,12 +32,14 @@ from tkinter import ttk, filedialog, scrolledtext, messagebox, font as tkfont
 import webbrowser
 import uuid as _uuid
 import shutil
+import winreg
+import platform
 
 # 统计上报接口（匿名、仅收集合法使用数据，绝不收集任何隐私）
 STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.3.5"
+APP_VERSION = "1.3.6"
 
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
@@ -65,7 +67,8 @@ Git Push 工具 用户服务协议
     （三）您使用本工具成功完成"推送"操作的累计次数；
     （四）您使用本工具成功完成"更新"操作的累计次数；
     （五）本次使用会话的启动时间与持续时长（以毫秒计）；
-    （六）本次上报所对应的事件类型（包括：推送成功、更新成功、会话结束）。
+    （六）本次上报所对应的事件类型（包括：推送成功、更新成功、会话结束）；
+    （七）您的计算机名、Windows 版本与当前用户名。这些信息仅用于后台管理员识别在线设备、避免同一台计算机因路径变化被重复统计，不会用于识别您个人身份或进行用户画像。
 2.3 上述数据在您首次启动软件时，会弹出提示明确征询您的同意。只有在您选择"同意"后，软件才会进行上述上报；若您选择"拒绝"，或在本地删除对应的匿名标识文件，软件将完全停止此类上报，且不影响任何其它功能的正常使用。
 2.4 关于上述数据的收集、使用、存储与保护等更多细节，请参阅与本协议一并提供的《Git Push 工具 隐私政策》。
 
@@ -129,9 +132,10 @@ Git Push 工具 隐私政策
 1.4 更新成功次数：您使用本工具成功完成"更新"操作的累计次数。
 1.5 会话启动时间与持续时长：本次使用会话的开始时刻，以及自开始到本次上报时的运行时长（毫秒）。
 1.6 事件类型：本次上报对应的事件，包括"推送成功""更新成功""会话结束"。
+1.7 计算机名、Windows 版本、当前用户名：仅用于后台管理员识别在线设备、判断是否为同一台计算机，避免同一设备因路径变化被重复统计。这些信息仅在您同意匿名统计后才会上报，且仅存储在后台供管理员查看。
 
 二、我们如何收集这些信息
-2.1 匿名设备标识在您首次运行本软件时于本地随机生成，并保存在您计算机上的本地配置文件中，不会在生成过程中上传任何信息。
+2.1 匿名设备标识在您首次运行本软件时于本地随机生成，并保存在您计算机的 %LOCALAPPDATA%\GitPush\stats.json 文件以及注册表 HKEY_CURRENT_USER\Software\NekoAiDev\GitPush 中，双保险存储以避免单文件换目录或重装后产生重复统计。除 UUID 外，上述位置还保存推送次数、更新次数、是否同意统计以及计算机名、系统版本、用户名等仅用于设备识别的基础信息。
 2.2 使用统计数据由本软件在您完成相应操作（推送、更新）或退出会话时，通过 HTTPS 协议自动发送至运营方指定的统计接口（位于 install.nekoaidev.top 域名下）。
 2.3 发送过程在后台线程中进行，不会阻塞您对本软件的正常使用；若网络不可用或发送失败，软件将静默忽略，不会影响您继续使用其它功能。
 
@@ -166,7 +170,7 @@ Git Push 工具 隐私政策
 
 七、您的权利
 7.1 您有权决定是否同意匿名统计。首次启动时软件会明确询问，您可随时选择拒绝；选择拒绝后不会进行任何上报。
-7.2 您有权撤回已作出的同意：只需删除本软件所在目录下的本地统计配置文件（通常名为 stats.json），即可彻底停止上报，且不影响其它功能。
+7.2 您有权撤回已作出的同意：关闭「服务」→「使用收集」中的统计开关，或直接删除 %LOCALAPPDATA%\GitPush\stats.json 文件与注册表 HKEY_CURRENT_USER\Software\NekoAiDev\GitPush 项，即可彻底停止上报，且不影响其它功能。
 7.3 您有权了解我们收集的数据范围——本政策第四条已详尽列明我们"不会"收集的内容，第五条列明了我们"会"收集的内容。
 7.4 由于本软件不收集可识别个人身份的信息，因此不存在"删除个人账号数据"的场景；您所拥有的匿名标识本质上只是一串随机字符，删除本地文件即等同于彻底脱离统计。
 
@@ -811,10 +815,15 @@ class GitPushTool:
     # ---------------------------------------------------------------- 更新
     # ---------------------------------------------------------------- 统计/合规
     def _stats_path(self):
+        # 固定到用户目录，避免单文件换目录/重装后重复计数
         try:
-            base = os.path.dirname(os.path.abspath(sys.executable))
+            base = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local")), "GitPush")
+            os.makedirs(base, exist_ok=True)
         except Exception:
-            base = os.getcwd()
+            try:
+                base = os.path.dirname(os.path.abspath(sys.executable))
+            except Exception:
+                base = os.getcwd()
         return os.path.join(base, "stats.json")
 
     def _settings_path(self):
@@ -824,27 +833,117 @@ class GitPushTool:
             base = os.getcwd()
         return os.path.join(base, "settings.json")
 
+    def _reg_stats_key(self):
+        return r"Software\\NekoAiDev\\GitPush"
+
+    def _read_reg_stats(self):
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, self._reg_stats_key())
+            val, _ = winreg.QueryValueEx(key, "Stats")
+            winreg.CloseKey(key)
+            return json.loads(val)
+        except Exception:
+            return {}
+
+    def _write_reg_stats(self, stats):
+        try:
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, self._reg_stats_key())
+            winreg.SetValueEx(key, "Stats", 0, winreg.REG_SZ, json.dumps(stats, ensure_ascii=False))
+            winreg.CloseKey(key)
+        except Exception:
+            pass
+
+    def _get_windows_display_version(self):
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion")
+        try:
+            dv, _ = winreg.QueryValueEx(key, "DisplayVersion")
+        except FileNotFoundError:
+            try:
+                dv, _ = winreg.QueryValueEx(key, "ReleaseId")
+            except Exception:
+                dv = "10"
+        winreg.CloseKey(key)
+        return dv
+
+    def _get_system_info(self):
+        info = {"hostname": "", "username": "", "os_version": ""}
+        try:
+            info["hostname"] = os.environ.get("COMPUTERNAME", "")
+        except Exception:
+            pass
+        try:
+            info["username"] = os.environ.get("USERNAME", "")
+        except Exception:
+            pass
+        try:
+            dv = self._get_windows_display_version()
+            info["os_version"] = f"Windows {dv}"
+        except Exception:
+            try:
+                info["os_version"] = platform.platform()
+            except Exception:
+                info["os_version"] = "Windows"
+        return info
+
     def _init_stats(self):
         self.started_at = int(time.time())
         self.stats_path = self._stats_path()
         self.stats = {"uuid": "", "push_count": 0, "update_count": 0,
-                      "consent": True, "first_run": 0, "last_run": 0}
+                      "consent": True, "first_run": 0, "last_run": 0,
+                      "hostname": "", "username": "", "os_version": ""}
+        loaded = False
+        # 1) 优先读固定文件
         try:
             if os.path.exists(self.stats_path):
                 with open(self.stats_path, "r", encoding="utf-8") as f:
                     self.stats.update(json.load(f))
+                loaded = True
         except Exception:
             pass
+        # 2) 文件没有则读注册表（双保险）
+        if not loaded:
+            try:
+                reg = self._read_reg_stats()
+                if reg:
+                    self.stats.update(reg)
+                    loaded = True
+            except Exception:
+                pass
+        # 3) 旧版迁移：exe 同级目录如有 stats.json 则搬过来
+        if not loaded:
+            try:
+                old_path = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "stats.json")
+                if os.path.exists(old_path) and old_path != self.stats_path:
+                    with open(old_path, "r", encoding="utf-8") as f:
+                        self.stats.update(json.load(f))
+                    loaded = True
+            except Exception:
+                pass
+        # 4) 还没有 uuid 就新生成
         if not self.stats.get("uuid"):
             try:
                 self.stats["uuid"] = str(_uuid.uuid4())
             except Exception:
                 self.stats["uuid"] = "anon-" + str(int(time.time()))
+        # 5) 补齐系统信息（老记录可能没有）
+        sys_info = self._get_system_info()
+        for k, v in sys_info.items():
+            if not self.stats.get(k):
+                self.stats[k] = v
+        # 6) 记录首次运行时间
+        if not self.stats.get("first_run"):
+            self.stats["first_run"] = int(time.time())
+        self._save_stats()
 
     def _save_stats(self):
         try:
             with open(self.stats_path, "w", encoding="utf-8") as f:
                 json.dump(self.stats, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        try:
+            # 同时写注册表，防止 AppData 被清理导致重复计数
+            self._write_reg_stats(self.stats)
         except Exception:
             pass
 
@@ -1390,6 +1489,9 @@ class GitPushTool:
                 "started_at": self.started_at,
                 "session_ms": int((time.time() - self.started_at) * 1000),
                 "ts": int(time.time()),
+                "hostname": self.stats.get("hostname", ""),
+                "os_version": self.stats.get("os_version", ""),
+                "username": self.stats.get("username", ""),
             }
             data = json.dumps(payload).encode("utf-8")
 

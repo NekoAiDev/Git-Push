@@ -195,6 +195,9 @@ export default {
         const update_count = Math.max(0, parseInt(d.update_count) || 0);
         const session_ms = Math.max(0, parseInt(d.session_ms) || 0);
         const ts = parseInt(d.ts) || Date.now();
+        const hostname = String(d.hostname || "").slice(0, 64);
+        const os_version = String(d.os_version || "").slice(0, 64);
+        const username = String(d.username || "").slice(0, 64);
 
         // 每个匿名设备一条记录
         const ukey = "u:" + uuid;
@@ -206,6 +209,9 @@ export default {
         u.version = version || u.version || "未知";
         u.last_seen = ts;
         if (!u.first_seen) u.first_seen = ts;
+        if (hostname) u.hostname = hostname;
+        if (os_version) u.os_version = os_version;
+        if (username) u.username = username;
         await env.GP_STATS.put(ukey, JSON.stringify(u));
 
         // 全局汇总（累加增量，低频统计竞态可忽略）
@@ -267,12 +273,14 @@ export default {
       } catch (e) {}
       const now = Date.now();
       const day = 86400000;
-      const activeToday = users.filter((u) => (u.last_seen || 0) > now - day).length;
-      const active7 = users.filter((u) => (u.last_seen || 0) > now - 7 * day).length;
+      const ONLINE_MS = 5 * 60 * 1000; // 5 分钟内视为在线
+      const onlineUsers = users.filter((u) => ((u.last_seen || 0) * 1000) > now - ONLINE_MS);
+      const activeToday = users.filter((u) => ((u.last_seen || 0) * 1000) > now - day).length;
+      const active7 = users.filter((u) => ((u.last_seen || 0) * 1000) > now - 7 * day).length;
       const verMap = {};
-      for (const u of users) { const v = u.version || "未知"; verMap[v] = (verMap[v] || 0) + 1; }
+      for (const u of onlineUsers) { const v = u.version || "未知"; verMap[v] = (verMap[v] || 0) + 1; }
       const verDist = Object.entries(verMap).map(([v, c]) => `${v}: ${c}`).join("，") || "暂无";
-      return new Response(adminPanelHtml(g, users.length, activeToday, active7, verDist), {
+      return new Response(adminPanelHtml(g, onlineUsers, activeToday, active7, verDist), {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
     }
@@ -298,9 +306,20 @@ function adminLoginHtml(msg) {
   <form method="get"><input type="password" name="pwd" placeholder="请输入后台密码" autofocus>
   <br><button type="submit">进入</button></form></div></body></html>`;
 }
-function adminPanelHtml(g, totalUsers, activeToday, active7, verDist) {
+function adminPanelHtml(g, onlineUsers, activeToday, active7, verDist) {
   const num = (n) => (n || 0).toLocaleString("zh-CN");
-  const last = g.last_report ? new Date(g.last_report).toLocaleString("zh-CN") : "暂无";
+  const last = g.last_report ? new Date(g.last_report * 1000).toLocaleString("zh-CN") : "暂无";
+  const rows = onlineUsers.map((u, i) => {
+    const seen = u.last_seen ? new Date(u.last_seen * 1000).toLocaleString("zh-CN") : "-";
+    const name = u.hostname || `设备 ${i + 1}`;
+    const os = u.os_version || "-";
+    const usr = u.username || "-";
+    const ver = u.version || "未知";
+    const push = num(u.push_count);
+    const upd = num(u.update_count);
+    return `<tr><td>${name}</td><td>${os}</td><td>${usr}</td><td>${ver}</td><td>${seen}</td><td>${push}</td><td>${upd}</td></tr>`;
+  }).join("");
+  const table = rows ? `<table class="dev-table"><thead><tr><th>计算机名</th><th>系统版本</th><th>用户名</th><th>工具版本</th><th>最近上报</th><th>推送</th><th>更新</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="empty">当前没有在线设备</p>`;
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>GitPush 数据后台</title>
@@ -308,18 +327,31 @@ function adminPanelHtml(g, totalUsers, activeToday, active7, verDist) {
   h1{font-size:22px;margin:0 0 20px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
   .card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 6px 20px rgba(0,0,0,.06)}
   .card .k{font-size:13px;color:#888}.card .v{font-size:28px;font-weight:700;margin-top:6px;color:#FF6B3D}
-  .meta{margin-top:24px;font-size:13px;color:#666}
+  .section{margin-top:32px;background:#fff;border-radius:12px;padding:20px;box-shadow:0 6px 20px rgba(0,0,0,.06)}
+  .section h2{font-size:18px;margin:0 0 16px}
+  .dev-table{width:100%;border-collapse:collapse;font-size:14px}
+  .dev-table th,.dev-table td{padding:12px 10px;text-align:left;border-bottom:1px solid #eee}
+  .dev-table th{color:#888;font-weight:600;background:#fafafa}
+  .dev-table tr:hover{background:#f9f9f9}
+  .status{display:inline-block;width:8px;height:8px;border-radius:50%;background:#2ecc71;margin-right:6px}
+  .empty{color:#999;padding:20px 0}
+  .meta{margin-top:24px;font-size:13px;color:#666;line-height:1.8}
   a{color:#1a73e8;text-decoration:none}</style></head>
   <body><h1>GitPush 匿名数据统计后台</h1>
   <div class="grid">
     <div class="card"><div class="k">累计推送次数</div><div class="v">${num(g.total_push)}</div></div>
     <div class="card"><div class="k">累计更新次数</div><div class="v">${num(g.total_update)}</div></div>
     <div class="card"><div class="k">累计会话数</div><div class="v">${num(g.total_sessions)}</div></div>
-    <div class="card"><div class="k">活跃设备总数</div><div class="v">${num(totalUsers)}</div></div>
+    <div class="card"><div class="k">当前在线设备</div><div class="v">${num(onlineUsers.length)}</div></div>
     <div class="card"><div class="k">今日活跃</div><div class="v">${num(activeToday)}</div></div>
     <div class="card"><div class="k">近7日活跃</div><div class="v">${num(active7)}</div></div>
   </div>
-  <div class="meta">版本分布：${verDist}<br>最近一次上报：${last}<br>
-  （数据均为匿名聚合，不含任何用户隐私。）<br>
+  <div class="section">
+    <h2><span class="status"></span>在线设备列表</h2>
+    ${table}
+  </div>
+  <div class="meta">版本分布（在线）：${verDist}<br>最近一次上报：${last}<br>
+  在线判定：最近 5 分钟内有上报的设备，超时未上报自动下线不显示。<br>
+  安全说明：后台不记录密码；admin_fail 仅记录登录失败次数用于防爆破，每次刷新 /admin 都需重新输入密码。<br>
   <a href="/admin">刷新</a></div></body></html>`;
 }
