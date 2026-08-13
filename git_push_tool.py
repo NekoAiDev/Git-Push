@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Git Push 小工具 
+Git Push 工具 
 ================================
 一个带图形界面的小工具：打开后，选择本地文件夹（或单个文件），
 填写远程仓库地址，点一下按钮，就能自动完成：
@@ -12,7 +12,7 @@ Git Push 小工具
     git push -u <remote> <branch>
 并在界面上实时显示每一步的日志
 
-运行方式（主人本机）：
+运行方式（本机）：
     python git_push_tool.py
 需要本机已安装 git 且能在命令行直接调用。
 """
@@ -36,7 +36,7 @@ import uuid as _uuid
 STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.3.3"
+APP_VERSION = "1.3.4"
 
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
@@ -346,7 +346,7 @@ class GitPushTool:
 
         update_menu = tk.Menu(menubar, tearoff=0)
         update_menu.add_command(label="检查更新", command=self._open_updater)
-        menubar.add_cascade(label="更新(U)", menu=update_menu)
+        menubar.add_cascade(label="更新", menu=update_menu)
 
         service_menu = tk.Menu(menubar, tearoff=0)
         service_menu.add_command(label="用户服务协议", command=lambda: self._show_doc("用户服务协议", DOC_EULA))
@@ -440,6 +440,12 @@ class GitPushTool:
         remote = self.remote_var.get().strip() or "origin"
         force = self.force_var.get()
 
+        # 强制推送二次确认
+        if force and settings.get("confirm_force"):
+            if not messagebox.askyesno("强制推送确认",
+                                       "你勾选了强制推送（--force），这会覆盖远程历史，确定要继续吗？"):
+                return
+
         # 提交信息：启用模板则按模板生成，否则用主窗口填写的内容
         if settings.get("commit_template_enabled") and settings.get("commit_template", "").strip():
             commit = self._fill_template(settings["commit_template"], branch)
@@ -461,6 +467,13 @@ class GitPushTool:
             retry_on_fail = 0
         use_proxy = bool(settings.get("use_proxy", False))
         proxy_url = settings.get("proxy_url", "").strip()
+        # 新增：Git 身份 / 概览 / 通知 / 整理
+        default_user_name = settings.get("default_user_name", "").strip()
+        default_user_email = settings.get("default_user_email", "").strip()
+        diff_preview = bool(settings.get("diff_preview", False))
+        desktop_notify = bool(settings.get("desktop_notify", False))
+        play_sound = bool(settings.get("play_sound", False))
+        auto_gc = bool(settings.get("auto_gc", False))
 
         if not path:
             messagebox.showerror("出错啦", "请先选择要 Push 的文件夹或文件")
@@ -469,7 +482,7 @@ class GitPushTool:
             messagebox.showerror("出错啦", "请填写要 Push 的远程仓库地址")
             return
         if not os.path.exists(path):
-            messagebox.showerror("出错啦", "主人填的路径不存在喵~请检查一下")
+            messagebox.showerror("出错啦", "填的路径不存在请检查一下")
             return
 
         # 记住本次选择的路径（供「记住路径」功能使用）
@@ -489,13 +502,28 @@ class GitPushTool:
                                    add_mode, push_tags, auto_tag,
                                    allow_empty, no_verify, gpg_sign, amend,
                                    pull_before_push, retry_on_fail,
-                                   use_proxy, proxy_url),
+                                   use_proxy, proxy_url,
+                                   default_user_name, default_user_email,
+                                   diff_preview, desktop_notify,
+                                   play_sound, auto_gc),
                              daemon=True)
         t.start()
 
+    def _git_exe(self):
+        """返回 git 可执行文件：未配置则使用系统 git。"""
+        try:
+            p = (self._load_settings().get("git_path", "") or "").strip()
+        except Exception:
+            p = ""
+        return p if p else "git"
+
     def run(self, cmd, cwd):
         """执行一条 git 命令，把输出实时写进日志，返回 returncode。"""
+        # 支持自定义 git 路径：把命令首元素 git 替换为配置的路径
+        if cmd and cmd[0] == "git":
+            cmd = [self._git_exe()] + cmd[1:]
         self.log("💻 " + " ".join(cmd))
+        t0 = time.perf_counter()
         try:
             proc = subprocess.Popen(
                 cmd, cwd=cwd,
@@ -506,6 +534,8 @@ class GitPushTool:
             for line in proc.stdout:
                 self.log(line.rstrip())
             proc.wait()
+            dt = time.perf_counter() - t0
+            self.log(f"⏱ 命令完成，耗时 {dt:.2f}s，返回码 {proc.returncode}")
             return proc.returncode
         except FileNotFoundError:
             self.log("❌ 找不到 git 命令，请确认 git 已安装并在 PATH 中")
@@ -517,7 +547,7 @@ class GitPushTool:
     def _git_out(self, args, cwd):
         """安全地取 git 命令的 stdout 文本，永不返回 None """
         try:
-            r = subprocess.run(["git"] + args, cwd=cwd,
+            r = subprocess.run([self._git_exe()] + args, cwd=cwd,
                                capture_output=True, text=True,
                                creationflags=subprocess.CREATE_NO_WINDOW)
             return r.stdout or ""
@@ -528,7 +558,21 @@ class GitPushTool:
                 add_mode="all", push_tags=False, auto_tag="",
                 allow_empty=False, no_verify=False, gpg_sign=False,
                 amend=False, pull_before_push=False, retry_on_fail=0,
-                use_proxy=False, proxy_url=""):
+                use_proxy=False, proxy_url="",
+                default_user_name="", default_user_email="",
+                diff_preview=False, desktop_notify=False,
+                play_sound=False, auto_gc=False):
+        t_start = time.perf_counter()
+        # 参数汇总（一次性打全，运行日志更完整）
+        self.log("═" * 52)
+        self.log(f"🚀 开始推送 · 分支 <{branch}> · 远程 <{remote}>"
+                 f"{' · 强制' if force else ''}")
+        self.log(f"   本地路径 ：{path}")
+        self.log(f"   远程仓库 ：{repo}")
+        self.log(f"   提交信息 ：{commit}")
+        self.log(f"   选项     ：add={add_mode} · 标签={auto_tag or '无'} · "
+                 f"pull={pull_before_push} · 重试={retry_on_fail}")
+        self.log("═" * 52)
         try:
             # 代理参数（仅作用到 push / pull 这类网络命令）
             proxy_args = []
@@ -547,26 +591,33 @@ class GitPushTool:
                 self.log(f"📂 仓库目录：{repo_dir}")
 
             # 1) 是否已是 git 仓库
-            inside = subprocess.run(
-                ["git", "rev-parse", "--is-inside-work-tree"],
-                cwd=repo_dir, capture_output=True, text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            if inside.returncode != 0:
-                self.log("🔧 还不是 Git 仓库，正在 git init ")
+            inside = self._git_out(["rev-parse", "--is-inside-work-tree"], repo_dir).strip().lower()
+            if inside != "true":
+                self.log("🔧 还不是 Git 仓库，正在 git init")
                 self.run(["git", "init"], repo_dir)
                 self.run(["git", "checkout", "-B", branch], repo_dir)
             else:
                 self.log("✅ 已经是 Git 仓库啦~")
+                cur = self._git_out(["branch", "--show-current"], repo_dir).strip()
+                self.log(f"   当前本地分支：{cur or '(分离头指针 / 未知)'}")
 
-            # 2) 检查 user 配置（向上查找全局，缺了 commit 会失败）
+            # 2) 检查 / 自动配置 user 身份
             name = self._git_out(["config", "user.name"], repo_dir).strip()
             email = self._git_out(["config", "user.email"], repo_dir).strip()
             if not name or not email:
-                self.log("⚠️ 此仓库（及全局）未配置 user.name / user.email，commit 可能失败")
-                self.log("   可在命令行先执行：")
-                self.log("   git config --global user.name \"你的名字\"")
-                self.log("   git config --global user.email \"你的邮箱\"")
+                if default_user_name or default_user_email:
+                    self.log("⚙️ 仓库未配置 user 身份，按「设置」自动写入默认身份")
+                    if default_user_name:
+                        self.run(["git", "config", "user.name", default_user_name], repo_dir)
+                        self.log(f"   user.name = {default_user_name}")
+                    if default_user_email:
+                        self.run(["git", "config", "user.email", default_user_email], repo_dir)
+                        self.log(f"   user.email = {default_user_email}")
+                else:
+                    self.log("⚠️ 此仓库（及全局）未配置 user.name / user.email，commit 可能失败")
+                    self.log("   可在命令行先执行：")
+                    self.log("   git config --global user.name \"你的名字\"")
+                    self.log("   git config --global user.email \"你的邮箱\"")
 
             # 3) 认证提示
             if repo.startswith("https://") and "@" not in repo:
@@ -585,26 +636,52 @@ class GitPushTool:
                 self.log(f"➕ 添加所选内容：{add_target}")
                 self.run(["git", "add", add_target], repo_dir)
 
+            # 4.5) 暂存区文件清单（信息更丰富）
+            staged = [x for x in self._git_out(
+                ["diff", "--cached", "--name-only"], repo_dir).strip().splitlines() if x]
+            self.log(f"📊 已暂存文件数：{len(staged)}")
+            for f in staged[:25]:
+                self.log(f"   + {f}")
+            if len(staged) > 25:
+                self.log(f"   … 其余 {len(staged) - 25} 个文件省略")
+
+            # 4.6) 推送前改动概览
+            if diff_preview:
+                self.log("🔍 推送前改动概览 (git diff --stat)：")
+                for line in self._git_out(["diff", "--stat", "HEAD"], repo_dir).strip().splitlines():
+                    if line:
+                        self.log("   " + line)
+
+            # 4.7) 提交前整理仓库
+            if auto_gc:
+                self.log("🧹 提交前自动整理仓库 (git gc --auto)")
+                self.run(["git", "gc", "--auto"], repo_dir)
+
             # 5) git commit
             commit_cmd = ["git", "commit", "-m", commit]
             if amend:
-                # 追加提交：在 commit 与 -m 之间插入 --amend
                 commit_cmd = ["git", "commit", "--amend", "-m", commit]
             if no_verify:
                 commit_cmd.append("--no-verify")
             if gpg_sign:
                 commit_cmd.append("--gpg-sign")
+            committed = False
             if amend:
-                # 追加提交不依赖是否有改动，直接改写上次提交
                 self.run(commit_cmd, repo_dir)
+                committed = True
             else:
                 status = self._git_out(["status", "--porcelain"], repo_dir).strip()
                 if status or allow_empty:
                     if allow_empty and not status:
                         self.log("💡 没有新改动，但已开启「允许空提交」，仍创建空提交")
                     self.run(commit_cmd, repo_dir)
+                    committed = True
                 else:
-                    self.log("💡 没有新的改动，跳过 commit ")
+                    self.log("💡 没有新的改动，跳过 commit")
+
+            if committed:
+                new_hash = self._git_out(["rev-parse", "HEAD"], repo_dir).strip()
+                self.log(f"🆔 本次提交：{new_hash[:12] if new_hash else '未知'}")
 
             # 6) git remote
             remotes = self._git_out(["remote"], repo_dir).split()
@@ -612,6 +689,8 @@ class GitPushTool:
                 self.run(["git", "remote", "set-url", remote, repo], repo_dir)
             else:
                 self.run(["git", "remote", "add", remote, repo], repo_dir)
+            remote_url = self._git_out(["remote", "get-url", remote], repo_dir).strip()
+            self.log(f"🔗 远程 {remote} 地址：{remote_url}")
 
             # 6.5) 确定要推送的本地 ref —— 修复 issue #2「src refspec main does not match any」
             local_branches = [b.strip() for b in
@@ -651,6 +730,7 @@ class GitPushTool:
             if push_tags:
                 cmd.append("--follow-tags")
             cmd += ["-u", remote, push_ref]
+            self.log(f"📤 推送命令：{' '.join(cmd)}")
             attempts = 1 + max(0, int(retry_on_fail or 0))
             rc = 1
             for attempt in range(1, attempts + 1):
@@ -664,19 +744,39 @@ class GitPushTool:
             if rc == 0 and auto_tag:
                 self.run(["git", "push", "-u", remote, auto_tag], repo_dir)
 
+            total = time.perf_counter() - t_start
             if rc == 0:
-                self.log("🎉 推送成功！")
+                self.log(f"🎉 推送成功！总耗时 {total:.2f}s")
                 self.set_status("✅ 推送成功")
                 self._report_event("push")
+                if play_sound:
+                    self._beep(True)
+                if desktop_notify:
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "推送完成", f"推送成功！\n耗时 {total:.1f}s"))
             else:
+                # 尝试从日志里抓取常见失败原因，给出更直白的提示
                 self.log("⚠️ 推送失败，请查看上方日志找原因（多半是凭证或分支冲突）")
                 self.set_status("❌ 推送失败")
+                if play_sound:
+                    self._beep(False)
+                if desktop_notify:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "推送完成", "推送失败，请查看运行日志"))
         except Exception as e:
             self.log(f"❌ 发生异常：{e}")
             self.set_status("❌ 出错")
         finally:
             self.running = False
             self.root.after(0, lambda: self.push_btn.config(state="normal"))
+
+    def _beep(self, ok=True):
+        """推送结束播放提示音：成功高音、失败低音。任何异常静默。"""
+        try:
+            import winsound
+            winsound.Beep(880 if ok else 320, 180)
+        except Exception:
+            pass
 
     # ---------------------------------------------------------------- 帮助
     def _show_help(self):
@@ -690,7 +790,7 @@ class GitPushTool:
             "3. 分支名默认 main，远程名默认 origin，可按需修改。\n"
             "4. 点「开始推送」，工具会自动完成：\n"
             "      git init（若还不是仓库）→ add → commit → remote → push\n"
-            "5. 日志区会实时显示每一步输出，失败时可据此排查喵~\n\n"
+            "5. 日志区会实时显示每一步输出，失败时可据此排查\n\n"
             "注意：本机需已安装 git 并能在命令行直接调用。"
         )
         messagebox.showinfo("使用说明", msg)
@@ -824,15 +924,29 @@ class GitPushTool:
             # 网络
             "use_proxy": False,           # 使用 HTTP/HTTPS 代理
             "proxy_url": "",              # 代理地址，如 http://127.0.0.1:7890
+            # Git 身份（仓库未配置 user.name/email 时自动应用，避免 commit 失败）
+            "default_user_name": "",      # 默认 Git 用户名
+            "default_user_email": "",     # 默认 Git 邮箱
+            # 推送高级补充
+            "git_path": "",               # 自定义 git 可执行文件路径（留空=系统 git）
+            "confirm_force": False,       # 强制推送前再弹一次二次确认
+            "diff_preview": False,        # 推送前在日志打印改动概览 (git diff --stat)
+            "auto_gc": False,             # 提交前自动 git gc --auto 整理仓库
             # 日志
             "log_timestamp": True,        # 每条日志加 [HH:MM:SS] 前缀
             "log_max_lines": 1000,        # 日志最大行数（超出自动截断）
             "save_log": False,            # 推送日志自动保存到文件
             "log_path": "",               # 日志文件路径（留空=程序同目录 GitPush.log）
+            "log_font_size": 10,          # 运行日志字体大小
+            # 通知与外观
+            "desktop_notify": False,      # 推送结束后弹窗报告成功/失败
+            "play_sound": False,          # 推送结束播放提示音
+            "maximize_on_start": False,   # 启动时窗口最大化
             # 隐私与统计
             "allow_stats": True,          # 允许发送匿名使用统计（默认开启）
             # 自动与界面
             "auto_check_update": True,    # 启动后静默检查更新
+            "skip_version": "",           # 跳过提示的版本号（留空=不跳过）
             "topmost": False,             # 窗口置顶
             "confirm_push": False,        # 推送前确认
             "remember_path": False,       # 启动时自动填入上次选择的路径
@@ -858,6 +972,19 @@ class GitPushTool:
 
     def _apply_settings(self):
         settings = self._load_settings()
+        # 运行日志字体大小
+        try:
+            fs = int(settings.get("log_font_size", 10))
+            fs = max(7, min(20, fs))
+            self.log_box.configure(font=("Consolas", fs))
+        except Exception:
+            pass
+        # 启动时窗口最大化
+        try:
+            if settings.get("maximize_on_start"):
+                self.root.state("zoomed")
+        except Exception:
+            pass
         # 界面：窗口置顶
         try:
             self.root.attributes("-topmost", bool(settings.get("topmost", False)))
@@ -958,10 +1085,16 @@ class GitPushTool:
                 data = json.loads(resp.read().decode("utf-8"))
             remote_ver = data.get("version", "")
             if self._version_lt(APP_VERSION, remote_ver):
+                try:
+                    skip = self._load_settings().get("skip_version", "") or ""
+                except Exception:
+                    skip = ""
+                if str(skip).strip() == str(remote_ver).strip():
+                    return  # 用户已选择跳过此版本
                 messagebox.showinfo(
                     "发现新版本",
                     f"检测到新版本 {remote_ver}（当前 {APP_VERSION}）\n\n"
-                    f"请在菜单「更新」→「检查更新」中进行升级喵~")
+                    f"请在菜单「更新」→「检查更新」中进行升级")
         except Exception:
             pass
 
@@ -1022,6 +1155,21 @@ class GitPushTool:
         confirm_var = tk.BooleanVar(value=bool(settings.get("confirm_push", False)))
         remember_var = tk.BooleanVar(value=bool(settings.get("remember_path", False)))
         confirm_exit_var = tk.BooleanVar(value=bool(settings.get("confirm_exit", False)))
+        # Git 身份
+        user_name_var = tk.StringVar(value=settings.get("default_user_name", ""))
+        user_email_var = tk.StringVar(value=settings.get("default_user_email", ""))
+        # 推送高级补充
+        git_path_var = tk.StringVar(value=settings.get("git_path", ""))
+        confirm_force_var = tk.BooleanVar(value=bool(settings.get("confirm_force", False)))
+        diff_preview_var = tk.BooleanVar(value=bool(settings.get("diff_preview", False)))
+        auto_gc_var = tk.BooleanVar(value=bool(settings.get("auto_gc", False)))
+        # 通知与外观
+        desktop_notify_var = tk.BooleanVar(value=bool(settings.get("desktop_notify", False)))
+        play_sound_var = tk.BooleanVar(value=bool(settings.get("play_sound", False)))
+        log_font_var = tk.StringVar(value=str(settings.get("log_font_size", 10)))
+        maximize_var = tk.BooleanVar(value=bool(settings.get("maximize_on_start", False)))
+        # 更新
+        skip_ver_var = tk.StringVar(value=settings.get("skip_version", ""))
 
         add_mode_map = {"all": "全部文件 (git add -A)",
                         "update": "仅已跟踪修改 (git add -u)",
@@ -1042,6 +1190,16 @@ class GitPushTool:
         ttk.Entry(frm1, textvariable=commit_var).grid(row=4, column=1, sticky="ew", padx=(0, 6))
         ttk.Checkbutton(frm1, text="强制推送 --force（危险！仅私人分支使用）", variable=force_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
         frm1.columnconfigure(1, weight=1)
+
+        # ---- Git 身份 ----
+        frm_id = ttk.LabelFrame(content, text="Git 身份（仓库未配置时自动应用）", padding=(12, 8))
+        frm_id.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Label(frm_id, text="默认用户名：").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Entry(frm_id, textvariable=user_name_var).grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        ttk.Label(frm_id, text="默认邮箱：").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Entry(frm_id, textvariable=user_email_var).grid(row=1, column=1, sticky="ew", padx=(0, 6))
+        ttk.Label(frm_id, text="仅当仓库及全局未配置 git user.name/email 时自动写入，避免 commit 失败", style="Small.TLabel").grid(row=2, column=1, sticky="w")
+        frm_id.columnconfigure(1, weight=1)
 
         # ---- 提交信息模板 ----
         frm2 = ttk.LabelFrame(content, text="提交信息模板", padding=(12, 8))
@@ -1077,6 +1235,16 @@ class GitPushTool:
         ttk.Entry(frm3, textvariable=retry_var, width=8).grid(row=5, column=1, sticky="w", padx=(0, 6))
         ttk.Label(frm3, text="0 = 不重试", style="Small.TLabel").grid(row=6, column=1, sticky="w")
 
+        # ---- 推送高级补充 ----
+        frm_adv = ttk.LabelFrame(content, text="推送高级补充", padding=(12, 8))
+        frm_adv.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Label(frm_adv, text="自定义 git 路径（留空=系统 git）：").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Entry(frm_adv, textvariable=git_path_var).grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        ttk.Checkbutton(frm_adv, text="强制推送前再弹一次二次确认（防误操作覆盖）", variable=confirm_force_var).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(frm_adv, text="推送前在日志打印改动概览 (git diff --stat)", variable=diff_preview_var).grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ttk.Checkbutton(frm_adv, text="提交前自动整理仓库 (git gc --auto)", variable=auto_gc_var).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        frm_adv.columnconfigure(1, weight=1)
+
         # ---- 网络代理 ----
         frm_net = ttk.LabelFrame(content, text="网络代理", padding=(12, 8))
         frm_net.pack(fill="x", padx=14, pady=(4, 4))
@@ -1110,6 +1278,22 @@ class GitPushTool:
         ttk.Checkbutton(frm4, text="窗口始终置顶显示", variable=topmost_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(frm4, text="推送前弹出确认框", variable=confirm_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(frm4, text="关闭窗口时确认（防止误关）", variable=confirm_exit_var).pack(anchor="w", pady=2)
+
+        # ---- 通知与外观 ----
+        frm_look = ttk.LabelFrame(content, text="通知与外观", padding=(12, 8))
+        frm_look.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Checkbutton(frm_look, text="推送结束后弹窗报告成功/失败", variable=desktop_notify_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frm_look, text="推送结束播放提示音（滴一声）", variable=play_sound_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(frm_look, text="启动时窗口最大化", variable=maximize_var).pack(anchor="w", pady=2)
+        ttk.Label(frm_look, text="运行日志字体大小：").pack(anchor="w", pady=(2, 0))
+        ttk.Entry(frm_look, textvariable=log_font_var, width=8).pack(anchor="w", pady=(0, 2))
+
+        # ---- 更新 ----
+        frm_upd = ttk.LabelFrame(content, text="更新", padding=(12, 8))
+        frm_upd.pack(fill="x", padx=14, pady=(4, 4))
+        ttk.Label(frm_upd, text="跳过提示的版本号（留空=不跳过）：").pack(anchor="w", pady=(2, 0))
+        ttk.Entry(frm_upd, textvariable=skip_ver_var, width=16).pack(anchor="w", pady=(0, 2))
+        ttk.Label(frm_upd, text="例：1.3.4 （填后该版本不再弹更新提示）", style="Small.TLabel").pack(anchor="w")
 
         def _save():
             try:
@@ -1151,6 +1335,17 @@ class GitPushTool:
                 "confirm_push": confirm_var.get(),
                 "remember_path": remember_var.get(),
                 "confirm_exit": confirm_exit_var.get(),
+                "default_user_name": user_name_var.get().strip(),
+                "default_user_email": user_email_var.get().strip(),
+                "git_path": git_path_var.get().strip(),
+                "confirm_force": confirm_force_var.get(),
+                "diff_preview": diff_preview_var.get(),
+                "auto_gc": auto_gc_var.get(),
+                "desktop_notify": desktop_notify_var.get(),
+                "play_sound": play_sound_var.get(),
+                "log_font_size": (lambda x: max(7, min(20, int(x) if str(x).strip().isdigit() else 10)))(log_font_var.get()),
+                "maximize_on_start": maximize_var.get(),
+                "skip_version": skip_ver_var.get().strip(),
             }
             self._save_settings(new_settings)
             # 隐私开关同步到统计配置
@@ -1166,7 +1361,7 @@ class GitPushTool:
             if new_settings["auto_fill"]:
                 self._apply_settings()
             win.destroy()
-            messagebox.showinfo("设置已保存", "设置已保存喵~")
+            messagebox.showinfo("设置已保存", "设置已保存")
 
         btn_frm = ttk.Frame(win)
         btn_frm.pack(side="bottom", fill="x", padx=14, pady=(10, 10))
@@ -1292,7 +1487,7 @@ class Updater:
         self.note_box.configure(state="disabled")
 
         # 运行日志（默认隐藏，固定高度，不撑大窗口）
-        self.log_frm = ttk.LabelFrame(self.window, text="运行日志（调试用）", padding=(8, 6))
+        self.log_frm = ttk.LabelFrame(self.window, text="运行日志", padding=(8, 6))
         self.log_box = scrolledtext.ScrolledText(self.log_frm, wrap="word",
                                                  font=("Consolas", 9), height=6)
         self.log_box.pack(fill="both", expand=True)
@@ -1435,7 +1630,7 @@ class Updater:
         # 兼容两种字段名：update_url 优先，url 兜底
         self.update_url = data.get("update_url") or data.get("url")
 
-        notes = data.get("notes") or data.get("body") or "作者没有写更新说明喵~"
+        notes = data.get("notes") or data.get("body") or "作者没有写更新说明"
         self._set_note(notes)
 
         if not self.update_url:
@@ -1621,7 +1816,7 @@ class Updater:
 
 
 def resource_path(rel):
-    """获取资源文件的真实路径：打包后从 _MEIPASS 取，开发模式下从脚本目录取 喵~"""
+    """获取资源文件的真实路径：打包后从 _MEIPASS 取，开发模式下从脚本目录取"""
     base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, rel)
 
