@@ -1,5 +1,5 @@
 {
-  "version": "1.3.6",
+  "version": "1.3.7",
   "notes": "v1.3.6\n- 统计系统改为按计算机稳定识别：UUID 保存到 %LOCALAPPDATA%\\GitPush\\stats.json 与注册表 HKEY_CURRENT_USER\\Software\\NekoAiDev\\GitPush，避免单文件换目录/重装导致重复计数。\n- 新增上报计算机名、Windows 版本、当前用户名，用于后台在线设备列表展示。\n- 后台 admin 面板新增「在线设备列表」，显示计算机名/系统版本/用户名/版本/最近上报/推送/更新；5 分钟内未上报自动下线不显示。\n- 后台已清空历史统计，从零重新计数。\n- 更新用户服务协议与隐私政策，补充新增字段说明。",
   "update_url": "https://install.nekoaidev.top/update.zip"
 }
