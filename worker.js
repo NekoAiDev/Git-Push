@@ -1,4 +1,4 @@
-// Cloudflare Worker：install.nekoaidev.top 分发 GitPush
+// Cloudflare Worker：install.nekoaidev.top 分发 GitPush + 轻量匿名设备统计后台
 // 内容源跟随 GitHub main 分支，自动最新，零文件维护。
 // 部署：wrangler deploy（本目录 wrangler.toml 已绑定自定义域 install.nekoaidev.top）
 //
@@ -7,24 +7,208 @@
 // - /gitpush.exe       → 流式代理上游 exe（cacheTtl=300，5 分钟边缘缓存）
 // - /GitPush_Setup.exe → 流式代理上游安装包（cacheTtl=300）
 // - /version.json /update.zip → 更新系统用（cacheTtl=0，不缓存，确保永远最新）
-// - 上游使用 GitHub raw（raw.githubusercontent.com），内容跟随 main 分支自动更新
-// - 自研匿名统计后台已于 v1.4.0 移除；下载页统计改用 Cloudflare Web Analytics（无 Cookie、不收集个人数据）
+// - /api/report        → 工具端匿名统计上报（只含版本、地区、设备名等，不含密码/文件/仓库）
+// - /admin             → 公开只读在线设备列表（无密码，因主人厌恶输密码；展示匿名 UUID/IP/地区/版本）
+// - IP 地区解析走 ipinfo.io（Worker 内调用第三方 API），结果缓存 KV 7 天
 
 const GITHUB_OWNER = "NekoAiDev";
 const GITHUB_REPO = "Git-Push";
 const UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/dist/GitPush.exe";
-// 安装包（25MB+）经 Worker 流式代理：用流式响应绕过 Worker 大响应体缓冲上限，走 Cloudflare 网络比直连 raw.githubusercontent.com 更快
 const INSTALLER_UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/GitPush_Setup.exe";
 
 // Cloudflare Web Analytics 站点 token（匿名访问统计，无 Cookie、不收集个人数据）
-// 获取方式：Cloudflare 控制台 → 选中 install.nekoaidev.top 域 → Analytics & Logs → Web Analytics
-//           → 创建/查看 site，复制 "Data Token" 填到下方；留空则不注入统计脚本。
 const WEB_ANALYTICS_TOKEN = "7bfb6ed22436465681c9d445e6775d77";
 
-// 构造 Web Analytics beacon 脚本（token 为空时返回空串，避免无效请求）
+// ipinfo.io token（可选）。主人可在 ipinfo.io 注册免费账号获取；留空则走免费无 token 接口，限流 1 req/sec/IP
+const IPINFO_TOKEN = "";
+
+// 中文省份映射（ipinfo.io 对国内 IP 返回英文 region，需要转中文）
+const REGION_EN_TO_CN = {
+  "Beijing": "北京", "Tianjin": "天津", "Hebei": "河北", "Shanxi": "山西",
+  "Inner Mongolia": "内蒙古", "Liaoning": "辽宁", "Jilin": "吉林",
+  "Heilongjiang": "黑龙江", "Shanghai": "上海", "Jiangsu": "江苏",
+  "Zhejiang": "浙江", "Anhui": "安徽", "Fujian": "福建", "Jiangxi": "江西",
+  "Shandong": "山东", "Henan": "河南", "Hubei": "湖北", "Hunan": "湖南",
+  "Guangdong": "广东", "Guangxi": "广西", "Hainan": "海南", "Chongqing": "重庆",
+  "Sichuan": "四川", "Guizhou": "贵州", "Yunnan": "云南", "Tibet": "西藏",
+  "Shaanxi": "陕西", "Gansu": "甘肃", "Qinghai": "青海", "Ningxia": "宁夏",
+  "Xinjiang": "新疆", "Hong Kong": "香港", "Macao": "澳门", "Taiwan": "台湾",
+  "Macau": "澳门"
+};
+
 function webAnalyticsScript() {
   if (!WEB_ANALYTICS_TOKEN) return "";
   return `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token":"${WEB_ANALYTICS_TOKEN}"}'></script>`;
+}
+
+// 取客户端真实 IP
+function getClientIP(request) {
+  return (
+    request.headers.get("CF-Connecting-IP") ||
+    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
+    "unknown"
+  );
+}
+
+// 调用 ipinfo.io 解析 IP 地区（Worker 内调用第三方 API）
+async function getIpInfo(ip, env) {
+  if (!ip || ip === "unknown") return null;
+  const cacheKey = `geo:${ip}`;
+
+  // 1) 先读 KV 缓存（7 天）
+  try {
+    const cached = await env.GP_STATS?.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+  } catch (e) {
+    // ignore
+  }
+
+  // 2) 请求 ipinfo.io
+  const url = IPINFO_TOKEN
+    ? `https://ipinfo.io/${ip}/json?token=${IPINFO_TOKEN}`
+    : `https://ipinfo.io/${ip}/json`;
+
+  try {
+    const resp = await fetch(url, {
+      headers: { "Accept": "application/json" },
+      cf: { cacheTtl: 0 }
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    // 写 KV 缓存 7 天
+    try {
+      await env.GP_STATS?.put(cacheKey, JSON.stringify(data), { expirationTtl: 7 * 24 * 60 * 60 });
+    } catch (e) {
+      // ignore
+    }
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+// 归一化地区：英文 region 转中文，未命中则保留原文
+function normalizeRegion(region) {
+  if (!region) return "";
+  const trimmed = region.trim();
+  return REGION_EN_TO_CN[trimmed] || trimmed;
+}
+
+// 综合拿地区信息：优先用户手动 region_user，否则 ipinfo.io 估算
+async function getClientLocation(ip, regionUser, env) {
+  if (regionUser && regionUser.trim()) {
+    return { ip, country: "CN", region: regionUser.trim(), city: "", location: `${regionUser.trim()}（手动）` };
+  }
+  const info = await getIpInfo(ip, env);
+  if (!info) {
+    return { ip, country: "", region: "", city: "", location: "未知" };
+  }
+  const country = info.country || "";
+  const region = normalizeRegion(info.region);
+  const city = info.city || "";
+  let location = region;
+  if (city && city !== region) location += ` ${city}`;
+  if (!location) location = country || "未知";
+  location += "（ipinfo.io）";
+  return { ip, country, region, city, location };
+}
+
+// 读取所有设备记录
+async function listDevices(env) {
+  const devices = [];
+  try {
+    const list = await env.GP_STATS?.list({ prefix: "u:" });
+    if (!list || !list.keys) return devices;
+    for (const k of list.keys) {
+      try {
+        const val = await env.GP_STATS?.get(k.name);
+        if (val) devices.push(JSON.parse(val));
+      } catch (e) {
+        // ignore
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  return devices;
+}
+
+// 后台 HTML（公开只读，无密码）
+function adminPanelHtml(devices) {
+  const now = Math.floor(Date.now() / 1000);
+  const online = devices.filter(d => d.last_seen && now - d.last_seen < 300).length;
+  const rows = devices
+    .sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0))
+    .map(d => {
+      const isOnline = d.last_seen && now - d.last_seen < 300;
+      const status = isOnline ? '<span style="color:#22c55e;font-weight:600">在线</span>' : '<span style="color:#9ca3af">离线</span>';
+      const lastSeen = d.last_seen ? new Date(d.last_seen * 1000).toLocaleString("zh-CN") : "-";
+      const loc = d.location || "未知";
+      return `<tr>
+        <td>${d.uuid?.slice(0, 8) || "-"}</td>
+        <td>${d.hostname || "-"}</td>
+        <td>${d.os_version || "-"}</td>
+        <td>${d.version || "-"}</td>
+        <td>${d.ip || "-"}</td>
+        <td>${loc}</td>
+        <td>${d.push_count || 0}</td>
+        <td>${d.update_count || 0}</td>
+        <td>${status}</td>
+        <td>${lastSeen}</td>
+      </tr>`;
+    }).join("");
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Git-Push 在线设备</title>
+<style>
+  body{font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;background:#f6f7f9;color:#1f2937;padding:24px;}
+  .wrap{max-width:1400px;margin:0 auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 30px rgba(0,0,0,.06);}
+  h1{margin:0 0 8px;font-size:22px;}
+  .stats{display:flex;gap:18px;margin:18px 0;}
+  .stat{background:#f3f4f6;border-radius:10px;padding:14px 18px;min-width:120px;}
+  .stat b{font-size:20px;display:block;color:#ea4c36;}
+  .stat span{font-size:12px;color:#6b7280;}
+  table{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px;}
+  th{background:#f9fafb;padding:10px;text-align:left;border-bottom:2px solid #e5e7eb;}
+  td{padding:10px;border-bottom:1px solid #f0f0f0;}
+  tr:hover{background:#fafafa;}
+  .small{color:#9ca3af;font-size:12px;margin-top:8px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Git-Push 在线设备面板</h1>
+  <div class="stats">
+    <div class="stat"><b>${devices.length}</b><span>总设备</span></div>
+    <div class="stat"><b>${online}</b><span>当前在线（5 分钟内）</span></div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>UUID</th>
+        <th>计算机名</th>
+        <th>系统</th>
+        <th>版本</th>
+        <th>IP</th>
+        <th>地区</th>
+        <th>推送</th>
+        <th>更新</th>
+        <th>状态</th>
+        <th>最近上报</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows || '<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:24px">暂无数据</td></tr>'}
+    </tbody>
+  </table>
+  <p class="small">IP 地区由 ipinfo.io 解析，手动选择地区优先显示。本面板公开只读，不记录密码。</p>
+</div>
+</body>
+</html>`;
 }
 
 const LANDING = `<!DOCTYPE html>
@@ -125,9 +309,69 @@ export default {
       });
     }
 
-    // 2) /gitpush.exe → 流式代理上游 exe（始终最新）
+    // 2) /api/report → 匿名统计上报
+    if (p === "/api/report") {
+      if (request.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405 });
+      }
+      try {
+        const payload = await request.json();
+        const ip = getClientIP(request);
+        const regionUser = (payload.region_user || "").trim();
+        const loc = await getClientLocation(ip, regionUser, env);
+
+        const uuid = payload.uuid || "anon";
+        const key = `u:${uuid}`;
+        let record = {};
+        try {
+          const existing = await env.GP_STATS?.get(key);
+          if (existing) record = JSON.parse(existing);
+        } catch (e) {
+          // ignore
+        }
+
+        record.uuid = uuid;
+        record.version = payload.version || record.version || "";
+        record.hostname = payload.hostname || record.hostname || "";
+        record.os_version = payload.os_version || record.os_version || "";
+        record.username = payload.username || record.username || "";
+        record.region_user = regionUser || record.region_user || "";
+        record.ip = loc.ip;
+        record.country = loc.country;
+        record.region = loc.region;
+        record.city = loc.city;
+        record.location = loc.location;
+
+        const event = payload.event;
+        if (event === "push") {
+          record.push_count = (record.push_count || 0) + 1;
+        } else if (event === "update") {
+          record.update_count = (record.update_count || 0) + 1;
+        }
+        record.last_seen = Math.floor(Date.now() / 1000);
+
+        await env.GP_STATS?.put(key, JSON.stringify(record));
+        return new Response(JSON.stringify({ ok: true, location: loc.location }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, error: e.message }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // 3) /admin → 公开只读在线设备面板（无密码）
+    if (p === "/admin") {
+      const devices = await listDevices(env);
+      return new Response(adminPanelHtml(devices), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    // 4) /gitpush.exe → 流式代理上游 exe
     if (p === "/gitpush.exe" || p === "/gitpush.exe/") {
-      // 带上常见浏览器 UA，避免 GitHub raw 把 Worker 请求当机器人拦截
       const upstreamReq = new Request(UPSTREAM, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0",
@@ -135,23 +379,19 @@ export default {
         },
       });
       const upstreamResp = await fetch(upstreamReq, { cf: { cacheTtl: 300 } });
-
-      // 上游异常时，让浏览器直接跳去 GitHub raw（通常不会被浏览器拦截）
       if (!upstreamResp.ok) {
         return Response.redirect(UPSTREAM, 302);
       }
-
       const headers = new Headers(upstreamResp.headers);
       headers.set("Content-Disposition", 'attachment; filename="GitPush.exe"');
       headers.set("Content-Type", "application/octet-stream");
       headers.set("Cache-Control", "public, max-age=300");
-      // 去掉上游可能带来的、会干扰下载的编码头
       headers.delete("content-encoding");
       headers.delete("content-length");
       return new Response(upstreamResp.body, { status: 200, headers });
     }
 
-    // 2.2) /GitPush_Setup.exe → 流式代理安装包（25MB+，用流式响应绕过 Worker 大响应体缓冲上限，走 Cloudflare 网络更快）
+    // 5) /GitPush_Setup.exe → 流式代理安装包
     if (p === "/gitpush_setup.exe" || p === "/gitpush_setup.exe/") {
       const upstreamReq = new Request(INSTALLER_UPSTREAM, {
         headers: {
@@ -172,7 +412,7 @@ export default {
       return new Response(upstreamResp.body, { status: 200, headers });
     }
 
-    // 2.5) /version.json 与 /update.zip → 代理 GitHub raw（更新系统用，不缓存）
+    // 6) /version.json 与 /update.zip → 代理 GitHub raw（不缓存）
     if (p === "/version.json" || p === "/update.zip") {
       const rawFile = p === "/version.json" ? "version.json" : "dist/update.zip";
       const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/main/${rawFile}`;
@@ -191,7 +431,7 @@ export default {
       return new Response(upstreamResp.body, { status: 200, headers });
     }
 
-    // 3) 其他 → 404
+    // 7) 其他 → 404
     return new Response("Not Found", { status: 404 });
   },
 };

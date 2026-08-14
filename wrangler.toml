@@ -19,8 +19,7 @@ routes = [
 
 account_id = "291be096c0dd976905b93dbf9c327f62"
 
-# 匿名统计 KV 存储：先在 Cloudflare 创建命名空间，把生成的 id 填到下方
-# 创建命令：wrangler kv namespace create GP_STATS
+# 匿名统计 KV 存储：已在 Cloudflare 创建，id 勿改
 [[kv_namespaces]]
 binding = "GP_STATS"
 id = "11c2160d633746eebaabc31039b05d6c"
