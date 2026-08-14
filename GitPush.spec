@@ -42,8 +42,10 @@ exe = EXE(
     strip=False,
     upx=False,
     upx_exclude=[],
-    # 解压目录改到用户可写的 LocalAppData，避免 %TEMP% 被杀毒/组策略拦截导致 python313.dll 加载失败
-    runtime_tmpdir=r"%LOCALAPPDATA%\GitPush\rt",
+    # 解压目录改到用户可写的 LocalAppData，避免 %TEMP% 被杀毒/组策略拦截导致 python313.dll 加载失败。
+    # 注意：必须用 os.environ 在【构建期】展开成真实绝对路径，不能写 "%LOCALAPPDATA%" 字面量（PyInstaller 不展开，
+    # 运行时拿到无效路径会回退到默认的 Temp\_MEI*，导致 v1.4.2 仍报 Failed to load Python DLL）。
+    runtime_tmpdir=os.path.join(os.environ.get('LOCALAPPDATA', os.environ.get('TEMP', '.')), 'GitPush', 'rt'),
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
