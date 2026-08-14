@@ -352,7 +352,7 @@ export default {
 
         await env.GP_STATS?.put(key, JSON.stringify(record));
         return new Response(JSON.stringify({ ok: true, location: loc.location }), {
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json; charset=utf-8" },
         });
       } catch (e) {
         return new Response(JSON.stringify({ ok: false, error: e.message }), {
