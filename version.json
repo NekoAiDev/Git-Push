@@ -1,5 +1,5 @@
 {
-  "version": "1.4.3",
-  "notes": "v1.4.3\n- 修复单文件解压目录未生效导致 python313.dll 加载失败（Failed to load Python DLL）的问题：runtime_tmpdir 改为构建期用 os.environ 真实展开为 LocalAppData\\GitPush\\rt，不再回退到被拦截的 %TEMP%。\n- 需手动覆盖安装 v1.4.3（自动更新通道此前在 v1.4.1 已中断）。",
+  "version": "1.4.4",
+  "notes": "v1.4.4\n- 检查更新（手动打开更新窗口或启动后自动检查）现在也会上报本机设备，/admin 面板在你点检查更新后即出现本机记录，无需再推代码或退出程序。\n- 沿用 v1.4.3 的修复：runtime_tmpdir 解压到 LocalAppData\\GitPush\\rt，绕开被拦截的 %TEMP%。",
   "update_url": "https://install.nekoaidev.top/update.zip"
 }

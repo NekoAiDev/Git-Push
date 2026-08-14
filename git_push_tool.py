@@ -39,7 +39,7 @@ import platform
 STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.4"
 
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
@@ -1188,6 +1188,7 @@ class GitPushTool:
             with self._urlopen_with_proxy(req, timeout=8) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             remote_ver = data.get("version", "")
+            self._report_event("update_check")  # 检查更新即上报设备，使 /admin 面板出现本机
             if self._version_lt(APP_VERSION, remote_ver):
                 try:
                     skip = self._load_settings().get("skip_version", "") or ""
@@ -1782,6 +1783,7 @@ class Updater:
     def _on_info_ready(self, data):
         remote_ver = str(data.get("version", "未知"))
         self._set_remote_ver(remote_ver)
+        self.parent._report_event("update_check")  # 检查更新即上报设备，使 /admin 面板出现本机
         self.info = data
         # 兼容两种字段名：update_url 优先，url 兜底
         self.update_url = data.get("update_url") or data.get("url")
