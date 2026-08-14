@@ -1,15 +1,14 @@
 // Cloudflare Worker：install.nekoaidev.top 分发 GitPush
 // 内容源跟随 GitHub main 分支，自动最新，零文件维护。
-// 部署：Cloudflare 后台「Workers」→ 创建 Worker → 粘贴本文件 → 部署 → 绑自定义域 install.nekoaidev.top
+// 部署：wrangler deploy（本目录 wrangler.toml 已绑定自定义域 install.nekoaidev.top）
 //
 // 说明：
-// - 根路径 /           → 显示下载落地页（内嵌 HTML）
-// - /gitpush.exe       → 流式代理上游 exe（cacheTtl=300，5 分钟边缘缓存，兼顾速度与新版本生效）
+// - 根路径 /           → 显示下载落地页（内嵌 HTML，含 Cloudflare Web Analytics 匿名访问统计）
+// - /gitpush.exe       → 流式代理上游 exe（cacheTtl=300，5 分钟边缘缓存）
 // - /GitPush_Setup.exe → 流式代理上游安装包（cacheTtl=300）
-// - /version.json /update.zip → 更新系统用（cacheTtl=0，不缓存，确保永远拿到最新版）
+// - /version.json /update.zip → 更新系统用（cacheTtl=0，不缓存，确保永远最新）
 // - 上游使用 GitHub raw（raw.githubusercontent.com），内容跟随 main 分支自动更新
-//   注：jsDelivr 对 .exe 二进制文件返回 403，因此不采用 jsDelivr 作为 exe 分发源
-// - 若将来 exe 体积变得很大（>50MB）触发 Worker 响应限制，可把代理分支改成 302 重定向到 UPSTREAM
+// - 自研匿名统计后台已于 v1.4.0 移除；下载页统计改用 Cloudflare Web Analytics（无 Cookie、不收集个人数据）
 
 const GITHUB_OWNER = "NekoAiDev";
 const GITHUB_REPO = "Git-Push";
@@ -17,10 +16,16 @@ const UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/dist
 // 安装包（25MB+）经 Worker 流式代理：用流式响应绕过 Worker 大响应体缓冲上限，走 Cloudflare 网络比直连 raw.githubusercontent.com 更快
 const INSTALLER_UPSTREAM = "https://raw.githubusercontent.com/NekoAiDev/Git-Push/main/GitPush_Setup.exe";
 
-// 后台鉴权
-const ADMIN_PWD = "mw41KUHH65WCIEcqsPoy";
-const SESSION_SECRET = "ec419e1cd1970dc5cf2fb55fbfd7a5a06c1053aa4ae16334c13a2696bc3ee9fb"; // 仅用于 HMAC 签名登录会话 Cookie，非密码
-const SESSION_COOKIE = "gp_sid";
+// Cloudflare Web Analytics 站点 token（匿名访问统计，无 Cookie、不收集个人数据）
+// 获取方式：Cloudflare 控制台 → 选中 install.nekoaidev.top 域 → Analytics & Logs → Web Analytics
+//           → 创建/查看 site，复制 "Data Token" 填到下方；留空则不注入统计脚本。
+const WEB_ANALYTICS_TOKEN = "7bfb6ed22436465681c9d445e6775d77";
+
+// 构造 Web Analytics beacon 脚本（token 为空时返回空串，避免无效请求）
+function webAnalyticsScript() {
+  if (!WEB_ANALYTICS_TOKEN) return "";
+  return `<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token":"${WEB_ANALYTICS_TOKEN}"}'></script>`;
+}
 
 const LANDING = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -101,6 +106,7 @@ const LANDING = `<!DOCTYPE html>
       不想安装？<a href="/gitpush.exe" download="GitPush.exe">下载免安装单文件版 GitPush.exe</a>
     </div>
   </div>
+  ${webAnalyticsScript()}
 </body>
 </html>`;
 
@@ -185,355 +191,7 @@ export default {
       return new Response(upstreamResp.body, { status: 200, headers });
     }
 
-    // 2.6) POST /api/report → 接收匿名统计并写入 KV（仅收集合法匿名数据）
-    if (p === "/api/report" && request.method === "POST") {
-      try {
-        const raw = await request.text();
-        let d;
-        try { d = JSON.parse(raw); } catch (e) { return new Response("bad json", { status: 400 }); }
-        const uuid = String(d.uuid || "").slice(0, 64);
-        if (!uuid) return new Response("bad uuid", { status: 400 });
-        const event = String(d.event || "");
-        if (!["push", "update", "session_end"].includes(event)) return new Response("bad event", { status: 400 });
-        const version = String(d.version || "").slice(0, 32);
-        const push_count = Math.max(0, parseInt(d.push_count) || 0);
-        const update_count = Math.max(0, parseInt(d.update_count) || 0);
-        const session_ms = Math.max(0, parseInt(d.session_ms) || 0);
-        const ts = parseInt(d.ts) || Date.now();
-        const hostname = String(d.hostname || "").slice(0, 64);
-        const os_version = String(d.os_version || "").slice(0, 64);
-        const username = String(d.username || "").slice(0, 64);
-        // 用户手动设置的所在地区（省份），优先于 IP 库估算；仅当非空时覆盖，避免清空既有值
-        const region_user = String(d.region_user || "").slice(0, 32);
-
-        // 取客户端 IP 与地理位置（服务端从请求头 / Cloudflare 边缘数据获取，无需工具端上报）
-        const loc = await getClientLocation(request, env);
-
-        // 每个匿名设备一条记录
-        const ukey = "u:" + uuid;
-        let u = {};
-        try { u = await env.GP_STATS.get(ukey, { type: "json" }) || {}; } catch (e) {}
-        u.push_count = Math.max(u.push_count || 0, push_count);
-        u.update_count = Math.max(u.update_count || 0, update_count);
-        if (event === "session_end") u.sessions = (u.sessions || 0) + 1;
-        u.version = version || u.version || "未知";
-        u.last_seen = ts;
-        if (!u.first_seen) u.first_seen = ts;
-        if (hostname) u.hostname = hostname;
-        if (os_version) u.os_version = os_version;
-        if (username) u.username = username;
-        if (region_user) u.region_user = region_user;
-        if (loc.ip) u.ip = loc.ip;
-        if (loc.country) u.country = loc.country;
-        if (loc.region) u.region = loc.region;
-        if (loc.city) u.city = loc.city;
-        if (loc.location) u.location = loc.location;
-        await env.GP_STATS.put(ukey, JSON.stringify(u));
-
-        // 全局汇总（累加增量，低频统计竞态可忽略）
-        let g = {};
-        try { g = await env.GP_STATS.get("g", { type: "json" }) || {}; } catch (e) {}
-        g.total_push = (g.total_push || 0) + (event === "push" ? 1 : 0);
-        g.total_update = (g.total_update || 0) + (event === "update" ? 1 : 0);
-        g.total_sessions = (g.total_sessions || 0) + (event === "session_end" ? 1 : 0);
-        g.last_report = ts;
-        await env.GP_STATS.put("g", JSON.stringify(g));
-
-        return new Response(JSON.stringify({ ok: true }), {
-          headers: { "Content-Type": "application/json" },
-        });
-      } catch (e) {
-        return new Response(JSON.stringify({ ok: false, error: String(e) }), {
-          status: 500, headers: { "Content-Type": "application/json" },
-        });
-      }
-    }
-
-    // 2.7) 后台：密码登录 + 签名会话 Cookie（刷新/重开浏览器在有效期内免输密码）
-    // 2.7.1) 退出登录
-    if (p === "/admin/logout") {
-      const headers = new Headers({ "Location": "/admin" });
-      headers.append("Set-Cookie",
-        `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
-      return new Response(null, { status: 302, headers });
-    }
-
-    // 2.7.2) POST /admin/login → 校验密码并下发会话 Cookie
-    if (p === "/admin/login" && request.method === "POST") {
-      let fail = {};
-      try { fail = JSON.parse(await env.GP_STATS.get("admin_fail") || "{}"); } catch (e) {}
-      if ((fail.count || 0) >= 5 && (Date.now() - (fail.ts || 0)) < 15 * 60 * 1000) {
-        return new Response(adminLoginHtml("尝试次数过多，请 15 分钟后再试", true), {
-          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
-        });
-      }
-      let pwd = "", remember = false;
-      try {
-        const form = await request.formData();
-        pwd = String(form.get("pwd") || "");
-        remember = form.get("remember") === "1" || form.get("remember") === "on";
-      } catch (e) {}
-      if (pwd !== ADMIN_PWD) {
-        fail.count = (fail.count || 0) + 1;
-        fail.ts = Date.now();
-        try { await env.GP_STATS.put("admin_fail", JSON.stringify(fail)); } catch (e) {}
-        const left = Math.max(0, 5 - fail.count);
-        return new Response(adminLoginHtml(left > 0 ? `密码错误，还可尝试 ${left} 次` : "密码错误", true), {
-          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }, status: 401,
-        });
-      }
-      try { await env.GP_STATS.put("admin_fail", JSON.stringify({ count: 0, ts: 0 })); } catch (e) {}
-      const maxAge = remember ? 30 * 24 * 3600 : 7 * 24 * 3600;
-      const token = await makeSessionToken(Date.now() + maxAge * 1000);
-      const headers = new Headers({ "Location": "/admin" });
-      headers.append("Set-Cookie",
-        `${SESSION_COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
-      return new Response(null, { status: 302, headers });
-    }
-
-    // 2.7.3) GET /admin → 面板（校验会话 Cookie；兼容旧书签 ?pwd=）
-    if (p === "/admin") {
-      const cookieHeader = request.headers.get("Cookie") || "";
-      const token = parseCookie(cookieHeader, SESSION_COOKIE);
-      const authed = token ? await verifySessionToken(token) : false;
-
-      // 兼容旧书签：?pwd= 也能登录，并顺带下发会话 Cookie
-      let authedByPwd = false;
-      const pwd = url.searchParams.get("pwd") || "";
-      if (!authed && pwd && pwd === ADMIN_PWD) authedByPwd = true;
-
-      if (!authed && !authedByPwd) {
-        let fail = {};
-        try { fail = JSON.parse(await env.GP_STATS.get("admin_fail") || "{}"); } catch (e) {}
-        if ((fail.count || 0) >= 5 && (Date.now() - (fail.ts || 0)) < 15 * 60 * 1000) {
-          return new Response("尝试次数过多，请 15 分钟后再试", {
-            headers: { "Content-Type": "text/plain; charset=utf-8" }, status: 429,
-          });
-        }
-        return new Response(adminLoginHtml("", false), {
-          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }, status: 200,
-        });
-      }
-
-      // 通过认证：重置失败计数
-      try { await env.GP_STATS.put("admin_fail", JSON.stringify({ count: 0, ts: 0 })); } catch (e) {}
-
-      const panelResp = await buildAdminPanel(env);
-      panelResp.headers.set("Cache-Control", "no-store");
-      // 若是用旧 ?pwd= 进来的，补发会话 Cookie，之后刷新不再要密码
-      if (authedByPwd && !authed) {
-        const maxAge = 7 * 24 * 3600;
-        const newToken = await makeSessionToken(Date.now() + maxAge * 1000);
-        panelResp.headers.append("Set-Cookie",
-          `${SESSION_COOKIE}=${newToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`);
-      }
-      return panelResp;
-    }
-
     // 3) 其他 → 404
     return new Response("Not Found", { status: 404 });
   },
 };
-
-// ---- 会话签名辅助 ----
-function parseCookie(header, name) {
-  if (!header) return "";
-  for (const part of header.split(";")) {
-    const idx = part.indexOf("=");
-    if (idx < 0) continue;
-    const k = part.slice(0, idx).trim();
-    const v = part.slice(idx + 1).trim();
-    if (k === name) return decodeURIComponent(v);
-  }
-  return "";
-}
-function b64urlEncode(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-function b64urlDecode(s) {
-  s = s.replace(/-/g, "+").replace(/_/g, "/");
-  while (s.length % 4) s += "=";
-  const bin = atob(s);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
-}
-async function hmacHex(message, secret) {
-  const key = await crypto.subtle.importKey(
-    "raw", new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
-  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-async function makeSessionToken(expiryMs) {
-  const body = b64urlEncode(JSON.stringify({ e: expiryMs }));
-  const sig = await hmacHex(body, SESSION_SECRET);
-  return body + "." + sig;
-}
-async function verifySessionToken(token) {
-  if (!token || typeof token !== "string" || !token.includes(".")) return false;
-  const idx = token.lastIndexOf(".");
-  const body = token.slice(0, idx);
-  const sig = token.slice(idx + 1);
-  const expected = await hmacHex(body, SESSION_SECRET);
-  if (sig !== expected) return false;
-  try {
-    const payload = JSON.parse(b64urlDecode(body));
-    return (payload.e || 0) > Date.now();
-  } catch (e) {
-    return false;
-  }
-}
-
-// ---- 后台面板辅助函数 ----
-async function getClientLocation(request, env) {
-  // 取客户端公网 IP（Cloudflare 边缘注入的头最可靠）
-  let ip = request.headers.get("CF-Connecting-IP")
-        || (request.headers.get("x-forwarded-for") || "").split(",")[0].trim()
-        || (request.cf && request.cf.ip) || "";
-  // Cloudflare 自带地理数据（零成本、零延迟，但对中国常返回英文或缺失）
-  let country = (request.cf && request.cf.country) || "";
-  let region = (request.cf && request.cf.region) || "";
-  let city = (request.cf && request.cf.city) || "";
-
-  // 中国 IP：Cloudflare 给的是英文/常缺失，统一用 ip-api.com（免费、无需 key、中文）拿中文省/市；结果缓存到 KV 7 天省额度
-  // 非中国 IP：直接用 Cloudflare 自带英文数据即可，避免额外外部调用
-  if (country === "CN" && ip) {
-    try {
-      let cached = null;
-      try { cached = await env.GP_STATS.get("geo:" + ip, { type: "json" }); } catch (e) {}
-      if (cached && cached.regionName) {
-        region = cached.regionName;
-        city = cached.city || "";
-        country = cached.country || country;
-      } else {
-        const r = await fetch("http://ip-api.com/json/" + ip + "?lang=zh-CN&fields=status,message,country,regionName,city,query");
-        if (r.ok) {
-          const j = await r.json();
-          if (j && j.status === "success") {
-            region = j.regionName || region;
-            city = j.city || city;
-            country = j.country || country;
-            try {
-              await env.GP_STATS.put("geo:" + ip, JSON.stringify({ country, regionName: region, city }), { expirationTtl: 7 * 86400 });
-            } catch (e) {}
-          }
-        }
-      }
-    } catch (e) {}
-  }
-
-  // 行政区划后缀归一化（去掉「省/市/自治区」等，便于去重与简洁展示，如「北京」）
-  const normAdmin = (s) => (s || "").replace(/(维吾尔|壮族|回族|自治区|省|市|地区|区)$/g, "");
-  // 展示串：省 市（同名/包含关系去重，如「北京」），否则国家，否则未知
-  let location;
-  const rN = normAdmin(region), cN = normAdmin(city);
-  if (rN && cN && rN !== cN && !region.includes(city) && !city.includes(region)) location = rN + " " + cN;
-  else location = rN || cN || country || "未知";
-  return { ip, country, region, city, location };
-}
-
-function adminLoginHtml(msg, isError) {
-  const tip = msg ? `<p style="color:#c0392b;margin:0 0 14px;font-size:14px">${msg}</p>` : "";
-  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>GitPush 后台</title>
-  <style>body{font-family:"Microsoft YaHei",sans-serif;background:#f4f6f9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-  .box{background:#fff;padding:32px 40px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.08);text-align:center;width:300px}
-  input[type=password]{padding:10px 14px;font-size:15px;border:1px solid #ccc;border-radius:8px;width:100%;box-sizing:border-box}
-  label{display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px;color:#666;justify-content:center}
-  button{margin-top:18px;padding:10px 26px;font-size:15px;border:none;border-radius:8px;background:#FF6B3D;color:#fff;cursor:pointer;width:100%}
-  h2{margin:0 0 18px;color:#333}</style></head>
-  <body><div class="box"><h2>GitPush 数据后台</h2>
-  ${tip}
-  <form method="post" action="/admin/login"><input type="password" name="pwd" placeholder="请输入后台密码" autofocus>
-  <label><input type="checkbox" name="remember" value="1"> 记住我（30 天内免登录）</label>
-  <button type="submit">进入</button></form></div></body></html>`;
-}
-
-async function buildAdminPanel(env) {
-  let g = {};
-  try { g = await env.GP_STATS.get("g", { type: "json" }) || {}; } catch (e) {}
-  let users = [];
-  try {
-    const list = await env.GP_STATS.list({ prefix: "u:" });
-    for (const k of list.keys) {
-      try {
-        const u = await env.GP_STATS.get(k.name, { type: "json" });
-        if (u) users.push(u);
-      } catch (e) {}
-    }
-  } catch (e) {}
-  const now = Date.now();
-  const day = 86400000;
-  const ONLINE_MS = 5 * 60 * 1000; // 5 分钟内视为在线
-  const onlineUsers = users.filter((u) => ((u.last_seen || 0) * 1000) > now - ONLINE_MS);
-  const activeToday = users.filter((u) => ((u.last_seen || 0) * 1000) > now - day).length;
-  const active7 = users.filter((u) => ((u.last_seen || 0) * 1000) > now - 7 * day).length;
-  const verMap = {};
-  for (const u of onlineUsers) { const v = u.version || "未知"; verMap[v] = (verMap[v] || 0) + 1; }
-  const verDist = Object.entries(verMap).map(([v, c]) => `${v}: ${c}`).join("，") || "暂无";
-  return new Response(adminPanelHtml(g, onlineUsers, activeToday, active7, verDist), {
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
-function adminPanelHtml(g, onlineUsers, activeToday, active7, verDist) {
-  const num = (n) => (n || 0).toLocaleString("zh-CN");
-  const last = g.last_report ? new Date(g.last_report * 1000).toLocaleString("zh-CN") : "暂无";
-  const rows = onlineUsers.map((u, i) => {
-    const seen = u.last_seen ? new Date(u.last_seen * 1000).toLocaleString("zh-CN") : "-";
-    const name = u.hostname || `设备 ${i + 1}`;
-    const os = u.os_version || "-";
-    const usr = u.username || "-";
-    const ver = u.version || "未知";
-    const ip = u.ip || "-";
-    const regionUser = u.region_user || "";
-    const locTxt = (regionUser || u.location || "-") + (regionUser ? "（手动）" : (u.location ? "（IP估算）" : ""));
-    const push = num(u.push_count);
-    const upd = num(u.update_count);
-    return `<tr><td>${name}</td><td>${os}</td><td>${usr}</td><td>${ver}</td><td>${ip}</td><td>${locTxt}</td><td>${seen}</td><td>${push}</td><td>${upd}</td></tr>`;
-  }).join("");
-  const table = rows ? `<table class="dev-table"><thead><tr><th>计算机名</th><th>系统版本</th><th>用户名</th><th>工具版本</th><th>IP</th><th>地区</th><th>最近上报</th><th>推送</th><th>更新</th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="empty">当前没有在线设备</p>`;
-  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>GitPush 数据后台</title>
-  <style>body{font-family:"Microsoft YaHei",sans-serif;background:#f4f6f9;margin:0;padding:32px;color:#222}
-  h1{font-size:22px;margin:0 0 20px;display:flex;align-items:center;justify-content:space-between}
-  .logout{font-size:13px;background:#fff;border:1px solid #ddd;color:#666;padding:8px 14px;border-radius:8px;text-decoration:none}
-  .logout:hover{background:#f0f0f0}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
-  .card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 6px 20px rgba(0,0,0,.06)}
-  .card .k{font-size:13px;color:#888}.card .v{font-size:28px;font-weight:700;margin-top:6px;color:#FF6B3D}
-  .section{margin-top:32px;background:#fff;border-radius:12px;padding:20px;box-shadow:0 6px 20px rgba(0,0,0,.06)}
-  .section h2{font-size:18px;margin:0 0 16px}
-  .dev-table{width:100%;border-collapse:collapse;font-size:14px}
-  .dev-table th,.dev-table td{padding:12px 10px;text-align:left;border-bottom:1px solid #eee}
-  .dev-table th{color:#888;font-weight:600;background:#fafafa}
-  .dev-table tr:hover{background:#f9f9f9}
-  .status{display:inline-block;width:8px;height:8px;border-radius:50%;background:#2ecc71;margin-right:6px}
-  .empty{color:#999;padding:20px 0}
-  .meta{margin-top:24px;font-size:13px;color:#666;line-height:1.8}
-  a{color:#1a73e8;text-decoration:none}</style></head>
-  <body><h1>GitPush 匿名数据统计后台<a class="logout" href="/admin/logout">退出登录</a></h1>
-  <div class="grid">
-    <div class="card"><div class="k">累计推送次数</div><div class="v">${num(g.total_push)}</div></div>
-    <div class="card"><div class="k">累计更新次数</div><div class="v">${num(g.total_update)}</div></div>
-    <div class="card"><div class="k">累计会话数</div><div class="v">${num(g.total_sessions)}</div></div>
-    <div class="card"><div class="k">当前在线设备</div><div class="v">${num(onlineUsers.length)}</div></div>
-    <div class="card"><div class="k">今日活跃</div><div class="v">${num(activeToday)}</div></div>
-    <div class="card"><div class="k">近7日活跃</div><div class="v">${num(active7)}</div></div>
-  </div>
-  <div class="section">
-    <h2><span class="status"></span>在线设备列表</h2>
-    ${table}
-  </div>
-  <div class="meta">版本分布（在线）：${verDist}<br>最近一次上报：${last}<br>
-  在线判定：最近 5 分钟内有上报的设备，超时未上报自动下线不显示。<br>
-  安全说明：登录后通过 HMAC 签名的会话 Cookie 保持登录（默认 7 天，勾选"记住我"为 30 天），刷新或重开浏览器在有效期内均无需重新输入密码；后台绝不记录密码（admin_fail 仅记录登录失败次数用于防爆破）。<br>
-  <a href="/admin">刷新</a></div></body></html>`;
-}
