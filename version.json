@@ -1,5 +1,5 @@
 {
-  "version": "1.4.1",
+  "version": "1.4.2",
   "notes": "v1.4.1\n- 恢复「设置 → 隐私与统计」分组与「所在地区」手动选择。\n- 后台 IP/地区解析改在 Worker 内调用 ipinfo.io 完成，更准确。\n- /admin 面板公开只读，无需密码即可查看在线设备与地区分布。\n- 下载页继续保留 Cloudflare Web Analytics 匿名访问统计。\n- 同步更新《用户服务协议》与《隐私政策》。",
   "update_url": "https://install.nekoaidev.top/update.zip"
 }

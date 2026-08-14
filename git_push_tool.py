@@ -39,7 +39,7 @@ import platform
 STATS_URL = "https://install.nekoaidev.top/api/report"
 
 APP_TITLE = "Git Push 工具推送"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"
 
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
@@ -1961,6 +1961,10 @@ class Updater:
             '  exit /b\n'
             ')\n'
             "echo 正在更新 Git Push 工具，请稍候…\n"
+            ":: 强制结束可能残留的旧进程（/F 强制，/T 结束子进程）\n"
+            'taskkill /F /IM GitPush.exe /T >nul 2>&1\n'
+            ":: 清理可能残留的单文件解压目录，避免旧 _MEI 干扰新 exe 加载\n"
+            'for /D %%d in ("%TEMP%\\_MEI*") do rmdir /S /Q "%%d" >nul 2>&1\n'
             ":: 等待旧 GitPush.exe 进程完全退出，避免覆盖失败\n"
             'for /L %%i in (1,1,30) do (\n'
             '  tasklist /FI "IMAGENAME eq GitPush.exe" /NH | find /I "GitPush.exe" >nul 2>&1\n'

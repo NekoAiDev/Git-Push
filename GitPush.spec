@@ -9,7 +9,11 @@ import sys
 _vcr140_1_paths = glob.glob(os.path.join(os.path.dirname(sys.executable), 'vcruntime140_1.dll'))
 if not _vcr140_1_paths:
     _vcr140_1_paths = glob.glob(r'C:\Windows\System32\vcruntime140_1.dll')
-_vcr_binaries = [(p, '.') for p in _vcr140_1_paths]
+# Python 3.13 的 python313.dll 同时依赖 vcruntime140.dll（不带 _1），也显式带上，双保险
+_vcr140_paths = glob.glob(os.path.join(os.path.dirname(sys.executable), 'vcruntime140.dll'))
+if not _vcr140_paths:
+    _vcr140_paths = glob.glob(r'C:\Windows\System32\vcruntime140.dll')
+_vcr_binaries = [(p, '.') for p in (_vcr140_1_paths + _vcr140_paths)]
 
 a = Analysis(
     ['git_push_tool.py'],
@@ -38,7 +42,8 @@ exe = EXE(
     strip=False,
     upx=False,
     upx_exclude=[],
-    runtime_tmpdir=None,
+    # 解压目录改到用户可写的 LocalAppData，避免 %TEMP% 被杀毒/组策略拦截导致 python313.dll 加载失败
+    runtime_tmpdir=r"%LOCALAPPDATA%\GitPush\rt",
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,

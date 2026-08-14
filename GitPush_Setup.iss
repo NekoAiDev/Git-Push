@@ -10,8 +10,8 @@
 
 [Setup]
 AppName=Git Push
-AppVersion=1.4.1
-AppVerName=Git Push 1.4.1
+AppVersion=1.4.2
+AppVerName=Git Push 1.4.2
 AppPublisher=NekoAiDev
 DefaultDirName=C:\Program Files\Git Push
 ; 强制显示“选择目标位置”页面，允许用户自定义安装到 D 盘或其他任意目录（默认仍是 C:\Program Files）
