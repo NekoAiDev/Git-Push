@@ -9,7 +9,7 @@
 // - /version.json /update.zip → 更新系统用（cacheTtl=0，不缓存，确保永远最新）
 // - /api/report        → 工具端匿名统计上报（只含版本、地区、设备名等，不含密码/文件/仓库）
 // - /admin             → 公开只读在线设备列表（无密码，因主人厌恶输密码；展示匿名 UUID/IP/地区/版本）
-// - IP 地区解析走 ipinfo.io（Worker 内调用第三方 API），结果缓存 KV 7 天
+// - IP 地区解析走 ipinfo.io（Worker 内调用第三方 API），实时查询不再缓存（避免 IPv6 等定位漂移被旧结果锁定）
 
 const GITHUB_OWNER = "NekoAiDev";
 const GITHUB_REPO = "Git-Push";
@@ -50,20 +50,9 @@ function getClientIP(request) {
   );
 }
 
-// 调用 ipinfo.io 解析 IP 地区（Worker 内调用第三方 API）
+// 调用 ipinfo.io 解析 IP 地区（Worker 内调用第三方 API，实时查询不缓存）
 async function getIpInfo(ip, env) {
   if (!ip || ip === "unknown") return null;
-  const cacheKey = `geo:${ip}`;
-
-  // 1) 先读 KV 缓存（7 天）
-  try {
-    const cached = await env.GP_STATS?.get(cacheKey);
-    if (cached) return JSON.parse(cached);
-  } catch (e) {
-    // ignore
-  }
-
-  // 2) 请求 ipinfo.io
   const url = IPINFO_TOKEN
     ? `https://ipinfo.io/${ip}/json?token=${IPINFO_TOKEN}`
     : `https://ipinfo.io/${ip}/json`;
@@ -74,14 +63,7 @@ async function getIpInfo(ip, env) {
       cf: { cacheTtl: 0 }
     });
     if (!resp.ok) return null;
-    const data = await resp.json();
-    // 写 KV 缓存 7 天
-    try {
-      await env.GP_STATS?.put(cacheKey, JSON.stringify(data), { expirationTtl: 7 * 24 * 60 * 60 });
-    } catch (e) {
-      // ignore
-    }
-    return data;
+    return await resp.json();
   } catch (e) {
     return null;
   }
@@ -143,7 +125,11 @@ function adminPanelHtml(devices) {
       const isOnline = d.last_seen && now - d.last_seen < 300;
       const status = isOnline ? '<span style="color:#22c55e;font-weight:600">在线</span>' : '<span style="color:#9ca3af">离线</span>';
       const lastSeen = d.last_seen ? new Date(d.last_seen * 1000).toLocaleString("zh-CN") : "-";
-      const loc = d.location || "未知";
+      const locRaw = d.location || "未知";
+      const isManual = locRaw.includes("（手动）");
+      const loc = isManual
+        ? `${locRaw.replace("（手动）", "")}<span class="tag-manual">手动</span>`
+        : locRaw;
       return `<tr>
         <td>${d.uuid?.slice(0, 8) || "-"}</td>
         <td>${d.hostname || "-"}</td>
@@ -177,11 +163,18 @@ function adminPanelHtml(devices) {
   td{padding:10px;border-bottom:1px solid #f0f0f0;}
   tr:hover{background:#fafafa;}
   .small{color:#9ca3af;font-size:12px;margin-top:8px;}
+  .notice{background:#fff7ed;border:1px solid #fdba74;color:#9a3412;border-radius:10px;padding:12px 16px;font-size:13px;line-height:1.6;margin:14px 0 4px;}
+  .notice b{color:#c2410c;}
+  .tag-manual{display:inline-block;background:#dcfce7;color:#166534;border-radius:6px;padding:1px 6px;font-size:11px;margin-left:4px;}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Git-Push 在线设备面板</h1>
+  <div class="notice">
+    ⚠️ <b>IP 定位仅供参考</b>：地区由 ipinfo.io 按 IP 估算，可能不准确（尤其 IPv6 地址）。
+    以工具内 <b>设置 → 隐私与统计 → 所在地区</b> 手动选择为准；手动选择会优先显示并标注「手动」。
+  </div>
   <div class="stats">
     <div class="stat"><b>${devices.length}</b><span>总设备</span></div>
     <div class="stat"><b>${online}</b><span>当前在线（5 分钟内）</span></div>
@@ -205,7 +198,7 @@ function adminPanelHtml(devices) {
       ${rows || '<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:24px">暂无数据</td></tr>'}
     </tbody>
   </table>
-  <p class="small">IP 地区由 ipinfo.io 解析，手动选择地区优先显示。本面板公开只读，不记录密码。</p>
+  <p class="small">IP 地区由 ipinfo.io 实时解析（仅供参考，可能不准）；工具内手动选择的地区优先显示并标注「手动」。本面板公开只读，不记录密码。</p>
 </div>
 </body>
 </html>`;
