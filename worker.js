@@ -408,7 +408,8 @@ export default {
     // 6) /version.json 与 /update.zip → 代理 GitHub raw（不缓存）
     if (p === "/version.json" || p === "/update.zip") {
       const rawFile = p === "/version.json" ? "version.json" : "dist/update.zip";
-      const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/main/${rawFile}`;
+      // 追加时间戳强制绕过 GitHub raw (fastly) 的边缘缓存，确保每次拿到最新文件
+      const rawUrl = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/main/${rawFile}?t=${Date.now()}`;
       const upstreamResp = await fetch(
         new Request(rawUrl, { headers: { "User-Agent": "Mozilla/5.0", "Accept": "*/*" } }),
         { cf: { cacheTtl: 0 } }
