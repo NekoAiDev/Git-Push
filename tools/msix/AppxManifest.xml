@@ -15,7 +15,7 @@
   <Properties>
     <DisplayName>GitPush</DisplayName>
     <PublisherDisplayName>NekoAiDev</PublisherDisplayName>
-    <Logo>assets\StoreLogo.png</Logo>
+    <Logo>assets/StoreLogo.png</Logo>
   </Properties>
   <Dependencies>
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.22631.0" />
@@ -31,9 +31,9 @@
       <uap:VisualElements DisplayName="GitPush"
                           Description="Git Push 工具 / Git Push Tool"
                           BackgroundColor="transparent"
-                          Square150x150Logo="assets\Square150x150Logo.png"
-                          Square44x44Logo="assets\Square44x44Logo.png">
-        <uap:DefaultTile Wide310x150Logo="assets\Wide310x150Logo.png" />
+                          Square150x150Logo="assets/Square150x150Logo.png"
+                          Square44x44Logo="assets/Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="assets/Wide310x150Logo.png" />
       </uap:VisualElements>
     </Application>
   </Applications>
