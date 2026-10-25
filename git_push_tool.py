@@ -41,6 +41,22 @@ STATS_URL = "https://install.nekoaidev.top/api/report"
 APP_TITLE = "Git Push 工具推送"
 APP_VERSION = "1.4.4"
 
+# ---- Microsoft Store 分发开关 ----
+# 当本程序所在目录存在名为 STORE_BUILD.flag 的文件时，视为通过 Microsoft Store 分发。
+# Store 版会禁用内置自更新（改为引导用户前往 Microsoft Store 更新），以符合
+# Microsoft Store 政策 10.2.2（禁止应用绕过商店自行下载安装更新）。
+# 自托管版（install.nekoaidev.top 分发）不放置该 flag 文件，行为完全不变。
+# 打包 Store 版时，请在 MSIX 包的程序目录中额外包含此空文件。
+try:
+    _APP_DIR = os.path.dirname(os.path.abspath(
+        sys.executable if getattr(sys, "frozen", False) else __file__))
+except Exception:
+    _APP_DIR = os.getcwd()
+STORE_BUILD = os.path.exists(os.path.join(_APP_DIR, "STORE_BUILD.flag"))
+# Microsoft Store 产品 ID（提交到 Partner Center 后获得）。Store 版填入真实值，
+# 如 "9NXXXXXXXXX"；留空则回退到 Microsoft Store 网页。
+STORE_PRODUCT_ID = ""
+
 # ---- 内置文档（与安装目录中的 .txt 内容一致），供「帮助」菜单直接展示 ----
 DOC_EULA = r"""
 Git Push 工具 用户服务协议
@@ -1190,6 +1206,12 @@ class GitPushTool:
             remote_ver = data.get("version", "")
             self._report_event("update_check")  # 检查更新即上报设备，使 /admin 面板出现本机
             if self._version_lt(APP_VERSION, remote_ver):
+                if STORE_BUILD:
+                    messagebox.showinfo(
+                        "发现新版本",
+                        f"检测到新版本 {remote_ver}（当前 {APP_VERSION}）\n\n"
+                        f"本应用通过 Microsoft Store 分发，请通过 Microsoft Store 获取更新。")
+                    return
                 try:
                     skip = self._load_settings().get("skip_version", "") or ""
                 except Exception:
@@ -1818,6 +1840,11 @@ class Updater:
             self._set_banner(f"🎉 发现新版本 v{remote_ver}，建议立即更新！", "update")
             self._log(f"✅ 发现新版本：{remote_ver}，点击「立即更新」即可下载替换")
             self._set_btn("立即更新", True)
+            if STORE_BUILD:
+                self._set_banner(f"🎉 发现新版本 v{remote_ver}，请通过 Microsoft Store 更新", "update")
+                self._set_note("此版本通过 Microsoft Store 分发，更新将经由商店自动完成。\n点击下方按钮即可在 Microsoft Store 中更新。")
+                self._set_btn("前往 Microsoft Store 更新", True)
+                self.parent.after(0, lambda: self._safe_call(self.update_btn.config, {"command": self._open_store}))
         elif cmp > 0:
             self._log(f"🔍 版本比较：本地 {cur} > 远程 {rem} → 本地为更新版本")
             self._set_banner("当前版本比远程还新，无需更新", "ok")
@@ -1837,6 +1864,10 @@ class Updater:
 
     # ---------------------------------------------------------------- download & replace (zip)
     def _do_update(self):
+        if STORE_BUILD:
+            # Microsoft Store 版：禁止绕过商店自更新，改为引导用户前往商店更新
+            self._open_store()
+            return
         if not self.update_url:
             messagebox.showerror("无法更新", "没有可用的下载链接")
             return
@@ -1848,6 +1879,24 @@ class Updater:
         self._log(f"📦 更新包来源：{self.update_url}")
         self._log("开始下载更新压缩包，请稍候…")
         threading.Thread(target=self._download, daemon=True).start()
+
+    # ---------------------------------------------------------------- Microsoft Store 引导
+    def _open_store(self):
+        """Store 版：打开 Microsoft Store 的更新页面（不自行下载安装，符合商店政策）。"""
+        try:
+            if STORE_PRODUCT_ID:
+                webbrowser.open("ms-windows-store://pdp/?productid=" + STORE_PRODUCT_ID)
+                self._log(f"已在 Microsoft Store 打开产品页（productid={STORE_PRODUCT_ID}）")
+            else:
+                webbrowser.open("https://apps.microsoft.com/")
+                self._log("已在浏览器打开 Microsoft Store 网页")
+        except Exception as e:
+            self._log(f"打开 Microsoft Store 失败：{e}")
+            try:
+                messagebox.showwarning("打开商店失败",
+                    "无法自动打开 Microsoft Store，请手动在 Microsoft Store 中搜索 GitPush 进行更新。")
+            except Exception:
+                pass
 
     def _download(self):
         try:
